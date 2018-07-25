@@ -1,0 +1,368 @@
+---
+title: "Cross-Validation discovery"
+author: "André Veríssimo"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    fig_width: 10
+  html_document:
+    toc: true
+    self_contained: true
+    number_sections: true
+    fig_width: 10
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: true
+vignette: >
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
+  %\VignetteEncoding{UTF-8}
+params:
+  project: 'brca' # skcm prad brca
+  tissue: 'primary.solid.tumor' # primary.solid.tumor metastatic solid.tissue.normal
+  coding.genes: !r TRUE
+  degree.unweighted: !r TRUE
+  degree.correlation: 'pearson'
+  degree.cutoff: !r 0
+  #
+  degree.type: "string" # covariance, correlation, correlation.inv, oldie, sparsebn, string
+  #
+  handle.duplicates: 'keep_first' # keep_all , keep_first
+  #
+  # glmnet parameter
+  alpha: !r seq(0, 1, .1)
+  # subset of variables to be used (Inf for all)
+  subset: !r Inf
+  #
+  seed: !r 1985
+  n.cores: !r 10
+  #
+  calc.params.old: !r FALSE
+---
+
+## Libraries
+
+```{r, messages=FALSE, warning=FALSE}
+library(futile.logger)
+library(parallel)
+library(glmnet)
+library(loose.rock)
+library(digest)
+library(ggplot2)
+library(reshape2)
+library(survival)
+library(brca.data)
+library(Vennerable)
+library(limma)
+library(tidyverse)
+library(forcats)
+library(survival.owl)
+library(biclust)
+#
+library(glmSparseNet)
+```
+
+```{r, include=FALSE}
+devtools::install_github('averissimo/glmnet')
+#
+devtools::load_all()
+#
+.Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
+.Last.value <- show.message(FALSE)
+.Last.value <- flog.layout(layout.format('[~l] ~m'))
+.Last.value <- flog.appender(appender.tee('logger.txt'))
+theme_set(theme_minimal())
+```
+
+## Parameters
+
+```{r parms, echo=FALSE}
+max.chars <- max(sapply(names(params), nchar))
+for (ix.names in sort(names(params))) {
+  prefix <- paste(array(' ', max.chars - nchar(ix.names)), collapse = '')
+  if (is.vector(params[[ix.names]]) && length(params[[ix.names]]) == 1) {
+    if (is.list(params[[ix.names]])) {
+      flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
+    }
+    else if (is.character(params[[ix.names]])) {
+      flog.info('  %s%s: %s', prefix, ix.names, params[[ix.names]])
+    }  else if (is.infinite(params[[ix.names]])) {
+      flog.info('  %s%s: %f', prefix, ix.names, params[[ix.names]])
+    } else if (is.integer(params[[ix.names]])) {
+      flog.info('  %s%s: % 11d', prefix, ix.names, params[[ix.names]])
+    } else {
+      flog.info('  %s%s: % 11.3f', prefix, ix.names, params[[ix.names]])
+    }
+  } else if (is.vector(params[[ix.names]])) {
+    flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
+  } else {
+    flog.info('  %s%s: (i do not know how to display this)', prefix, ix.names)
+  }
+}
+```
+
+# Load and normalize data
+
+## Load TCGA data
+
+```{r, eval=FALSE}
+# xdata     - matrix with FPKM gene level expression
+# ydata     - survival data
+# xdata.raw - original matrix with possible multiple tissue samples from same indiviudal
+prepare.tcga.survival.data(params$project, 
+                           params$tissue, 
+                           #
+                           handle.duplicates            = params$handle.duplicates, 
+                           center                       = TRUE,
+                           log2.normalize               = TRUE,
+                           include.negative.survival    = TRUE,
+                           input.type                   = 'rna',
+                           #
+                           cache.prefix = 'tcga-data',
+                           coding.genes = params$coding.genes)
+```
+
+
+```{r load.data, include=FALSE}
+my.data <- run.cache(prepare.tcga.survival.data, 
+                     params$project, 
+                     params$tissue, 
+                     #
+                     handle.duplicates            = params$handle.duplicates, 
+                     center                       = TRUE,
+                     log2.normalize               = TRUE,
+                     include.negative.survival    = TRUE,
+                     input.type                   = 'rna',
+                     #
+                     cache.prefix = 'tcga-data',
+                     coding.genes = params$coding.genes)
+#
+clinical <- my.data$clinical
+#
+xdata     <- my.data$xdata
+ydata     <- my.data$ydata
+xdata.raw <- my.data$xdata.raw
+#
+#
+xdata.digest.cache     <- my.data$xdata.digest
+xdata.raw.digest.cache <- my.data$xdata.raw.digest
+ydata.digest.cache     <- my.data$ydata.digest
+#
+rm(my.data)
+```
+
+## Load degree data
+
+```{r degree.load}
+if (params$degree.type == 'oldie') {
+  #
+  # Load old matrix used in SPARSA conference
+  load(sprintf('/home/averissimo/work/rpackages/brca.analysis/data/degree-%.6f.RData', params$degree.cutoff))
+  
+} else if (params$degree.type == 'correlation') {
+  #
+  # Load degree of network calculated summing the inverse of each weight
+  degree <- degree.cor(xdata.raw, 
+                       consider.unweighted = params$degree.unweighted, 
+                       cutoff              = params$degree.cutoff, 
+                       method              = params$degree.correlation,
+                       n.cores = params$n.cores)
+} else if (params$degree.type == 'covariance') {
+  #
+  # Load degree of network calculated using covariance
+  degree <- degree.cov(xdata.raw, 
+                       consider.unweighted = params$degree.unweighted, 
+                       cutoff              = params$degree.cutoff, 
+                       method              = params$degree.correlation,
+                       n.cores = params$n.cores)
+} else if (params$degree.type == 'sparsebn') {
+  #
+  # Load degree of network from sparsebn package (calulate bayesian network)
+  degree <- degree.sparsebn(xdata.raw,
+                            cutoff              = params$degree.cutoff, 
+                            consider.unweighted = params$degree.unweighted,
+                            n.cores = params$n.cores)
+} else if (params$degree.type == 'string') {
+  #
+  # Load degree of STRING network downloaded from external sources
+  degree <- run.cache(string.db.homo.sapiens) %>% {
+    run.cache(build.string.network, ., use.names = 'ensembl')
+    } %>% {
+      .@x[.@x <= params$degree.cutoff] <- 0
+      if (params$degree.unweighted) {
+        .@x <- (.@x != 0) * 1
+      }
+      Matrix::colSums(.) + Matrix::rowSums(.)
+    }
+  
+  #
+  # Adds missing genes as nodes with 0 degree
+  
+  degree <- colnames(xdata.raw)[!colnames(xdata.raw) %in% names(degree)] %>% {
+   c(degree, array(0, length(.), dimnames = list(.))) 
+  } %>% { .[colnames(xdata.raw)] }
+}
+```
+
+### Penalty
+
+## Preparing degree vector
+
+* Normalize degree between 0 and 1
+* DegreeCox: 1 - degree
+* OrphanCox: degree
+* `trans.fun` is a double power to scale the values
+
+see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
+
+```{r transformation_function}
+# see ?glmSparseNet::heuristic.scale
+trans.fun <- function(x) { heuristic.scale(x, min.ret = .2) }
+```
+
+
+```{r prepare.penalty, echo=FALSE}
+original.penalty.factor        <- degree
+names(original.penalty.factor) <- colnames(xdata)
+
+# if (params$add.age.at.diag) {
+#   #
+#   age.at.diag.norm <- c(xdata.train[,'age.at.diag'],
+#                         xdata.test[,'age.at.diag'])
+#   age.at.diag.norm <- age.at.diag.norm[colnames(xdata)]
+#   age.cov <- unlist(mclapply(xdata.ix.no.added, function(ix) {
+#     co.exp <- cov(age.at.diag.norm, xdata[ix,], method = 'pearson')
+#     if (abs(co.exp) >= params$degree.perct)
+#       return(co.exp)
+#     else {
+#       return(0)
+#     }
+#   }, mc.cores = params$n.cores))
+#   original.penalty.factor <- original.penalty.factor + age.cov
+#   original.penalty.factor <- c(original.penalty.factor, age.at.diag = sum(age.cov))
+# }
+
+##########################
+#                        #
+#   SUPER IMPORTANT!!!!  #
+#                        #
+##########################
+original.penalty.factor[is.na(original.penalty.factor)] <- 0
+norm.orig.penalty.factor <- original.penalty.factor / max(original.penalty.factor[!is.na(original.penalty.factor)])
+
+#
+#
+# DegreeCox (old and log(old))
+#
+penalty.factor.degree.log <- penalty.factor.degree.old <- 1 / norm.orig.penalty.factor
+
+inf.ix <- is.infinite(penalty.factor.degree.old) # index for infinite values
+
+# log(old)
+log.penal                          <- log(penalty.factor.degree.old[!inf.ix]) + 1
+penalty.factor.degree.log[!inf.ix] <- log.penal
+penalty.factor.degree.log[inf.ix]  <- max(log.penal) + 1
+
+# old
+non.log                           <- penalty.factor.degree.old[!inf.ix]
+penalty.factor.degree.old[inf.ix] <- max(non.log) + 1
+
+#
+# DegreeCox heuristic
+#
+penalty.factor.degree.new <-trans.fun(1 - norm.orig.penalty.factor)
+
+#
+# OrphanCox
+#
+penalty.factor.orphan <- trans.fun(norm.orig.penalty.factor)
+```
+
+## Cross-validation
+
+Testing classic elastic-net, DegreeCox and OrphanCox with cross-validation to find optimal number of variables for comparisson models.
+
+```{r cv.models, echo=FALSE}
+alpha.results <- alpha.km <- list()
+
+for (ix.alpha in params$alpha) {
+  cv.classic <- my.cv.glmnet('cv.classic', 
+                             ix.alpha,
+                             xdata,
+                             ydata,
+                             rep(1, ncol(xdata)), 
+                             lambda.min.ratio = .001,
+                             n.cores          = params$n.cores,
+                             seed             = params$seed)
+  
+  cv.degree  <- my.cv.glmnet('cv.degree', 
+                             ix.alpha,
+                             xdata,
+                             ydata,
+                             penalty.factor.degree.new, 
+                             lambda.min.ratio = .001,
+                             n.cores          = params$n.cores,
+                             seed             = params$seed)
+  cv.orphan  <- my.cv.glmnet('cv.degree', 
+                             ix.alpha,
+                             xdata,
+                             ydata,
+                             penalty.factor.orphan, 
+                             lambda.min.ratio = .001,
+                             n.cores          = params$n.cores,
+                             seed             = params$seed)  
+  
+  alpha.results[[sprintf('%.3f', ix.alpha)]] <- list(glmnet = sum(coef(cv.classic$model, s = 'lambda.min')[,1] != 0),
+                                                     degree = sum(coef(cv.degree$model, s = 'lambda.min')[,1] != 0),
+                                                     orphan = sum(coef(cv.orphan$model, s = 'lambda.min')[,1] != 0))
+  
+  alpha.km[[sprintf('%.3f', ix.alpha)]] <- list(glmnet = my.draw.kaplan(coef(cv.classic$model, s = 'lambda.min')[,1], '', xdata, ydata)$pvalue,
+                                                degree = my.draw.kaplan(coef(cv.degree$model, s = 'lambda.min')[,1], '', xdata, ydata)$pvalue,
+                                                orphan = my.draw.kaplan(coef(cv.orphan$model, s = 'lambda.min')[,1], '', xdata, ydata)$pvalue)
+}
+```
+
+```{r}
+melt(alpha.km) %>% 
+  mutate(Alpha = L1, Model = L2) %>%
+  filter(Alpha != '0.000') %>% 
+  ggplot() + geom_point(aes(x = Alpha, y = value, color = Model), alpha = .5)
+```
+
+```{r}
+melt(alpha.results) %>% 
+  mutate(Alpha = L1, Model = L2) %>%
+  filter(Alpha != '0.000') %>% 
+  ggplot() + geom_point(aes(x = Alpha, y = value, color = Model))
+```
+
+
+
+```{r, eval=FALSE}
+show.cv.info <- function(my.model, name) {
+  selected.genes <- sort(colnames(xdata)[my.model$coef != 0])
+  flog.info(' * %s: %d -- %s', name, sum(my.model$coef != 0), paste(selected.genes, collapse = ', '))
+  return(selected.genes)
+}
+
+flog.info('10-fold cross-validation')
+cv.classic.genes <- show.cv.info(cv.classic, 'classic')
+cv.degree.genes  <- show.cv.info(cv.degree, ' degree')
+cv.orphan.genes  <- show.cv.info(cv.orphan, ' orphan')
+
+tryCatch({
+vv <- Venn(list(Classic = cv.classic.genes, Degree = cv.degree.genes, Orphan = cv.orphan.genes))
+plot(vv, doWeights = FALSE)
+}, error = function(err) { flog.error('Probel with %s', err)})
+#
+km.cv <- list()
+
+km.cv[['cv.classic']] <- draw.kaplan(list(CV.Classic = cv.classic$coef), xdata[,xdata.ix], ydata, plot.title = 'CV.Classic', legend.outside = F)
+km.cv[['cv.degree']] <- draw.kaplan(list(CV.Degree = cv.degree$coef), xdata[,xdata.ix], ydata, plot.title = 'CV.Degree', legend.outside = F)
+km.cv[['cv.orphan']] <- draw.kaplan(list(CV.Orphan = cv.orphan$coef), xdata[,xdata.ix], ydata, plot.title = 'CV.Orphan', legend.outside = F)
+
+for (ix in names(km.cv)) {
+  print(km.cv[[ix]]$plot)
+}
+```
+
