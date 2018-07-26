@@ -49,7 +49,7 @@ km.name <- function(title, alpha, is.network = NULL) {
       'Promotes low degree with '
     }
   }
-  return(ggtitle(sprintf('%s: %s%s%s%s', title, type, l1, sep, l2), subtitle = subtitle))
+  return(ggplot2::ggtitle(sprintf('%s: %s%s%s%s', title, type, l1, sep, l2), subtitle = subtitle))
 }
 
 
@@ -64,6 +64,6 @@ km.name <- function(title, alpha, is.network = NULL) {
 #' @return
 #' @export
 my.draw.kaplan <- function(coef.l, plot.title, xdata, ydata) {
-  return(draw.kaplan(coef.l, xdata, ydata,
+  return(glmSparseNet::draw.kaplan(coef.l, xdata, ydata,
                      plot.title = plot.title, legend.outside = F, ylim = c(0,1)))
 }

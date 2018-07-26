@@ -15,7 +15,7 @@ call.results <- function(seed,
 
   #
   # Build training data
-  ixs <- balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = train.perc)
+  ixs <- loose.rock::balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = train.perc)
   #flog.info('ixs:', ixs, capture = T)
   xdata.test <- xdata[ixs$test,]
   ydata.test <- ydata[ixs$test,]
@@ -30,7 +30,7 @@ call.results <- function(seed,
     xdata.ix <- sample(xdata.ix, params$subset)
   }
 
-  xdata.train.digest <- digest.cache(xdata.train[, xdata.ix])
+  xdata.train.digest <- loose.rock::digest.cache(xdata.train[, xdata.ix])
 
   #
   # MODELS
@@ -75,7 +75,7 @@ call.results <- function(seed,
     ix.cache <- sprintf('%s_models', el$name)
     #
     suppressWarnings(
-      result  <- glmSparseNet.cox(xdata        = xdata.train[,xdata.ix],
+      result  <- glmSparseNet::glmSparseNet.cox(xdata        = xdata.train[,xdata.ix],
                                   ydata        = ydata.train,
                                   target.vars  = el$target,
                                   alpha        = params$alpha,

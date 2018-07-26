@@ -30,7 +30,7 @@ params:
   handle.duplicates: 'keep_first' # keep_all , keep_first
   #
   # glmnet parameter
-  alpha: !r seq(0, 1, .1)
+  alpha: !r seq(0, .9, .1)
   # subset of variables to be used (Inf for all)
   subset: !r Inf
   #
@@ -69,7 +69,7 @@ devtools::load_all()
 #
 .Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
 .Last.value <- show.message(FALSE)
-.Last.value <- flog.layout(layout.format('[~l] ~m'))
+.Last.value <- flog.layout(layout.format('[~l ~t] ~m'))
 .Last.value <- flog.appender(appender.tee('logger.txt'))
 theme_set(theme_minimal())
 ```
@@ -283,86 +283,108 @@ penalty.factor.orphan <- trans.fun(norm.orig.penalty.factor)
 Testing classic elastic-net, DegreeCox and OrphanCox with cross-validation to find optimal number of variables for comparisson models.
 
 ```{r cv.models, echo=FALSE}
-alpha.results <- alpha.km <- list()
+alpha.models <- tibble(alpha = numeric(), glmnet = list(), hub = list(), orphan = list())
 
-for (ix.alpha in params$alpha) {
-  cv.classic <- my.cv.glmnet('cv.classic', 
-                             ix.alpha,
-                             xdata,
-                             ydata,
-                             rep(1, ncol(xdata)), 
-                             lambda.min.ratio = .001,
-                             n.cores          = params$n.cores,
-                             seed             = params$seed)
-  
-  cv.degree  <- my.cv.glmnet('cv.degree', 
-                             ix.alpha,
-                             xdata,
-                             ydata,
-                             penalty.factor.degree.new, 
-                             lambda.min.ratio = .001,
-                             n.cores          = params$n.cores,
-                             seed             = params$seed)
-  cv.orphan  <- my.cv.glmnet('cv.degree', 
-                             ix.alpha,
-                             xdata,
-                             ydata,
-                             penalty.factor.orphan, 
-                             lambda.min.ratio = .001,
-                             n.cores          = params$n.cores,
-                             seed             = params$seed)  
-  
-  alpha.results[[sprintf('%.3f', ix.alpha)]] <- list(glmnet = sum(coef(cv.classic$model, s = 'lambda.min')[,1] != 0),
-                                                     degree = sum(coef(cv.degree$model, s = 'lambda.min')[,1] != 0),
-                                                     orphan = sum(coef(cv.orphan$model, s = 'lambda.min')[,1] != 0))
-  
-  alpha.km[[sprintf('%.3f', ix.alpha)]] <- list(glmnet = my.draw.kaplan(coef(cv.classic$model, s = 'lambda.min')[,1], '', xdata, ydata)$pvalue,
-                                                degree = my.draw.kaplan(coef(cv.degree$model, s = 'lambda.min')[,1], '', xdata, ydata)$pvalue,
-                                                orphan = my.draw.kaplan(coef(cv.orphan$model, s = 'lambda.min')[,1], '', xdata, ydata)$pvalue)
+for (ix.seed in seq(params$seed, params$seed + 10)) {
+  flog.info('Starting run with seed %d', ix.seed)
+  for (ix.alpha in params$alpha) {
+    cv.classic <- my.cv.glmnet('cv.classic', 
+                               ix.alpha,
+                               xdata,
+                               ydata,
+                               rep(1, ncol(xdata)), 
+                               lambda.min.ratio = .001,
+                               n.cores          = params$n.cores,
+                               seed             = ix.seed)
+    
+    cv.degree  <- my.cv.glmnet('cv.degree', 
+                               ix.alpha,
+                               xdata,
+                               ydata,
+                               penalty.factor.degree.new, 
+                               lambda.min.ratio = .001,
+                               n.cores          = params$n.cores,
+                               seed             = ix.seed)
+    cv.orphan  <- my.cv.glmnet('cv.degree', 
+                               ix.alpha,
+                               xdata,
+                               ydata,
+                               penalty.factor.orphan, 
+                               lambda.min.ratio = .001,
+                               n.cores          = params$n.cores,
+                               seed             = ix.seed)  
+    
+    alpha.models <- rbind(alpha.models, tibble(alpha  = ix.alpha, 
+                                               glmnet = list(cv.classic$model), 
+                                               hub    = list(cv.degree$model), 
+                                               orphan = list(cv.orphan$model)))
+    flog.info('  * Finished run with alpha %.3f', ix.alpha)
+  }
 }
 ```
+
+## Kaplan-Meier Results per `alpha` parameter
+
+Individuals are separated by the coefficients estimated by the model in two groups with high and low risk of the event *(death)*. The median is then used.
+
+### Summary table for each model type *(mean is used)*
+
+```{r, echo=FALSE}
+km.all <- apply(alpha.models, 1:2, function(ix.name) {
+  if (is.numeric(ix.name[[1]])) {
+    return(ix.name[[1]])
+  } else {
+    best.coef <- coef(ix.name[[1]], s = 'lambda.min')[,1]
+    return(draw.kaplan(best.coef, xdata, ydata)$pvalue)
+  }
+})
+
+km.all %>% as.data.frame %>%  group_by(alpha) %>% summarise_all(mean) %>% knitr::kable()
+```
+
+### Kaplan-Meier estimator plot
+
+```{r, echo=FALSE}
+km.all %>% as.data.frame %>% 
+  melt.data.frame(id.vars = 'alpha') %>% 
+  mutate(Alpha = factor(alpha), Model = variable) %>%
+  ggplot(aes(x = Alpha, y = value, color = Model)) + 
+  geom_boxplot(alpha = .5) + 
+  # geom_jitter(width = 0.3) +
+  ggtitle('Kaplan-Meier estimator (per alpha parameter)', 
+          subtitle = 'Two groups (High/Low risk of event) are estimated based on Cox model\'s coefficients')
+```
+
+
+## Concordance C-Index Results per `alpha` parameter
+
+Concordance C-Index calculates a value between 0 and 1 that represents the pairwise concordance between the survival time and the relative-risk calculated from the Cox model. In other words, it assesses for each pair of individuals if individuals with lower risk survive longer than individuals with higher risks.
+
+### Summary of results
+
+```{r, echo=FALSE}
+c.index.all <- apply(alpha.models, 1:2, function(ix.name) {
+  if (is.numeric(ix.name[[1]])) {
+    return(ix.name[[1]])
+  } else {
+    best.coef <- coef(ix.name[[1]], s = 'lambda.min')[,1]
+    return(fit.risk(best.coef, xdata, ydata, NULL))
+  }
+})
+
+c.index.all %>% as.data.frame %>%  group_by(alpha) %>% summarise_all(mean) %>% knitr::kable()
+```
+
+### C-Index plot
 
 ```{r}
-melt(alpha.km) %>% 
-  mutate(Alpha = L1, Model = L2) %>%
-  filter(Alpha != '0.000') %>% 
-  ggplot() + geom_point(aes(x = Alpha, y = value, color = Model), alpha = .5)
+c.index.all  %>% as.data.frame %>% 
+  melt.data.frame(id.vars = 'alpha') %>% 
+  mutate(Alpha = factor(alpha), Model = variable) %>%
+  ggplot(aes(x = Alpha, y = value, color = Model)) + 
+  geom_boxplot(alpha = .5) + 
+  # geom_jitter(width = 0.2) +
+  ggtitle('Concordance C-Index (per alpha parameter)')
 ```
 
-```{r}
-melt(alpha.results) %>% 
-  mutate(Alpha = L1, Model = L2) %>%
-  filter(Alpha != '0.000') %>% 
-  ggplot() + geom_point(aes(x = Alpha, y = value, color = Model))
-```
-
-
-
-```{r, eval=FALSE}
-show.cv.info <- function(my.model, name) {
-  selected.genes <- sort(colnames(xdata)[my.model$coef != 0])
-  flog.info(' * %s: %d -- %s', name, sum(my.model$coef != 0), paste(selected.genes, collapse = ', '))
-  return(selected.genes)
-}
-
-flog.info('10-fold cross-validation')
-cv.classic.genes <- show.cv.info(cv.classic, 'classic')
-cv.degree.genes  <- show.cv.info(cv.degree, ' degree')
-cv.orphan.genes  <- show.cv.info(cv.orphan, ' orphan')
-
-tryCatch({
-vv <- Venn(list(Classic = cv.classic.genes, Degree = cv.degree.genes, Orphan = cv.orphan.genes))
-plot(vv, doWeights = FALSE)
-}, error = function(err) { flog.error('Probel with %s', err)})
-#
-km.cv <- list()
-
-km.cv[['cv.classic']] <- draw.kaplan(list(CV.Classic = cv.classic$coef), xdata[,xdata.ix], ydata, plot.title = 'CV.Classic', legend.outside = F)
-km.cv[['cv.degree']] <- draw.kaplan(list(CV.Degree = cv.degree$coef), xdata[,xdata.ix], ydata, plot.title = 'CV.Degree', legend.outside = F)
-km.cv[['cv.orphan']] <- draw.kaplan(list(CV.Orphan = cv.orphan$coef), xdata[,xdata.ix], ydata, plot.title = 'CV.Orphan', legend.outside = F)
-
-for (ix in names(km.cv)) {
-  print(km.cv[[ix]]$plot)
-}
-```
 
