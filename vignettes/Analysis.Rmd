@@ -35,12 +35,12 @@ params:
   subset: !r Inf
   train: !r .8
   # number of times that training set is tested
-  ntimes: !r 1000
+  ntimes: !r 50
   # target variables that models should output
   target.vars: !r list(selected = 25)
   #
-  seed: !r 1985
-  n.cores: !r 13
+  seed: !r 2018
+  n.cores: !r 4
   #
   calc.params.old: !r FALSE
 ---
@@ -132,7 +132,7 @@ prepare.tcga.survival.data(params$project,
                            handle.duplicates            = params$handle.duplicates, 
                            center                       = TRUE,
                            log2.normalize               = TRUE,
-                           include.negative.survival    = TRUE,
+                           include.negative.survival    = FALSE,
                            input.type                   = 'rna',
                            #
                            cache.prefix = 'tcga-data',
@@ -148,7 +148,7 @@ my.data <- run.cache(prepare.tcga.survival.data,
                      handle.duplicates            = params$handle.duplicates, 
                      center                       = TRUE,
                      log2.normalize               = TRUE,
-                     include.negative.survival    = TRUE,
+                     include.negative.survival    = FALSE,
                      input.type                   = 'rna',
                      #
                      cache.prefix = 'tcga-data',
@@ -316,7 +316,7 @@ see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
 
 ```{r transformation_function}
 # see ?glmSparseNet::heuristic.scale
-trans.fun <- function(x) { heuristic.scale(x, min.ret = .2) }
+trans.fun <- function(x) { heuristic.scale(x)}
 ```
 
 ```{r prepare.penalty, echo=FALSE}

@@ -121,7 +121,16 @@ prepare.tcga.survival.data <- function(project                      = 'brca',
 
   # load data
   utils::data('clinical', package = package.name, envir = dat.env)
-  clinical <- dat.env$clinical
+  utils::data('gdc',      package = package.name, envir = dat.env)
+  clinical  <- dat.env$clinical
+  follow.up <- dat.env$gdc$follow.up
+
+  # TODO: remove and use from package
+  aa <- update.survival.from.followup(clinical$all, follow.up) %>% as.data.frame
+  rownames(aa) <- aa$bcr_patient_barcode
+
+  clinical[[tissue.type]][, 'vital_status']    <- aa[clinical[[tissue.type]]$bcr_patient_barcode, 'vital_status']
+  clinical[[tissue.type]][, 'surv_event_time'] <- aa[clinical[[tissue.type]]$bcr_patient_barcode, 'surv_event_time']
 
   # load only patients with valid bcr_patient_barcode (non NA)
   ix.clinical <- !is.na(clinical[[tissue.type]]$bcr_patient_barcode)

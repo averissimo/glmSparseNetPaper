@@ -75,7 +75,7 @@ call.results <- function(seed,
     ix.cache <- sprintf('%s_models', el$name)
     #
     suppressWarnings(
-      result  <- glmSparseNet::glmSparseNet.cox(xdata        = xdata.train[,xdata.ix],
+      result  <- glmSparseNet.cox(xdata        = xdata.train[,xdata.ix],
                                   ydata        = ydata.train,
                                   target.vars  = el$target,
                                   alpha        = params$alpha,

@@ -81,6 +81,7 @@ glmSparseNet.cox_ <- function(xdata,
                          family           ='cox',
                          standardize      = F,
                          network          = network,
+                         network.options  = network.options.default(min.degree = .2),
                          ...,
                          #
                          force.recalc = force.recalc,

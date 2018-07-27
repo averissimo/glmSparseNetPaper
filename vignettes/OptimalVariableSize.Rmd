@@ -30,11 +30,12 @@ params:
   handle.duplicates: 'keep_first' # keep_all , keep_first
   #
   # glmnet parameter
-  alpha: !r seq(0, .9, .1)
+  alpha: !r seq(0, 1, .1)
   # subset of variables to be used (Inf for all)
   subset: !r Inf
   #
   seed: !r 1985
+  seed.additional: !r 4
   n.cores: !r 10
   #
   calc.params.old: !r FALSE
@@ -70,7 +71,7 @@ devtools::load_all()
 .Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
 .Last.value <- show.message(FALSE)
 .Last.value <- flog.layout(layout.format('[~l ~t] ~m'))
-.Last.value <- flog.appender(appender.tee('logger.txt'))
+.Last.value <- flog.appender(appender.tee(sprintf('logger-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S'))))
 theme_set(theme_minimal())
 ```
 
@@ -115,10 +116,8 @@ prepare.tcga.survival.data(params$project,
                            handle.duplicates            = params$handle.duplicates, 
                            center                       = TRUE,
                            log2.normalize               = TRUE,
-                           include.negative.survival    = TRUE,
+                           include.negative.survival    = FALSE,
                            input.type                   = 'rna',
-                           #
-                           cache.prefix = 'tcga-data',
                            coding.genes = params$coding.genes)
 ```
 
@@ -131,7 +130,7 @@ my.data <- run.cache(prepare.tcga.survival.data,
                      handle.duplicates            = params$handle.duplicates, 
                      center                       = TRUE,
                      log2.normalize               = TRUE,
-                     include.negative.survival    = TRUE,
+                     include.negative.survival    = FALSE,
                      input.type                   = 'rna',
                      #
                      cache.prefix = 'tcga-data',
@@ -217,30 +216,13 @@ see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
 
 ```{r transformation_function}
 # see ?glmSparseNet::heuristic.scale
-trans.fun <- function(x) { heuristic.scale(x, min.ret = .2) }
+trans.fun <- function(x) { heuristic.scale(x) }
 ```
 
 
 ```{r prepare.penalty, echo=FALSE}
 original.penalty.factor        <- degree
 names(original.penalty.factor) <- colnames(xdata)
-
-# if (params$add.age.at.diag) {
-#   #
-#   age.at.diag.norm <- c(xdata.train[,'age.at.diag'],
-#                         xdata.test[,'age.at.diag'])
-#   age.at.diag.norm <- age.at.diag.norm[colnames(xdata)]
-#   age.cov <- unlist(mclapply(xdata.ix.no.added, function(ix) {
-#     co.exp <- cov(age.at.diag.norm, xdata[ix,], method = 'pearson')
-#     if (abs(co.exp) >= params$degree.perct)
-#       return(co.exp)
-#     else {
-#       return(0)
-#     }
-#   }, mc.cores = params$n.cores))
-#   original.penalty.factor <- original.penalty.factor + age.cov
-#   original.penalty.factor <- c(original.penalty.factor, age.at.diag = sum(age.cov))
-# }
 
 ##########################
 #                        #
@@ -283,41 +265,35 @@ penalty.factor.orphan <- trans.fun(norm.orig.penalty.factor)
 Testing classic elastic-net, DegreeCox and OrphanCox with cross-validation to find optimal number of variables for comparisson models.
 
 ```{r cv.models, echo=FALSE}
-alpha.models <- tibble(alpha = numeric(), glmnet = list(), hub = list(), orphan = list())
+alpha.models <- tibble(alpha = numeric(), seed = numeric(), glmnet = list(), hub = list(), orphan = list())
 
-for (ix.seed in seq(params$seed, params$seed + 10)) {
+for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
   flog.info('Starting run with seed %d', ix.seed)
   for (ix.alpha in params$alpha) {
-    cv.classic <- my.cv.glmnet('cv.classic', 
-                               ix.alpha,
-                               xdata,
-                               ydata,
-                               rep(1, ncol(xdata)), 
-                               lambda.min.ratio = .001,
-                               n.cores          = params$n.cores,
-                               seed             = ix.seed)
+    aux.call <- function(xdata, ydata, network, alpha, seed) { my.cv.glmnet(alpha, xdata, ydata, network, n.cores = params$n.cores, seed = seed) }
     
-    cv.degree  <- my.cv.glmnet('cv.degree', 
-                               ix.alpha,
-                               xdata,
-                               ydata,
-                               penalty.factor.degree.new, 
-                               lambda.min.ratio = .001,
-                               n.cores          = params$n.cores,
-                               seed             = ix.seed)
-    cv.orphan  <- my.cv.glmnet('cv.degree', 
-                               ix.alpha,
-                               xdata,
-                               ydata,
-                               penalty.factor.orphan, 
-                               lambda.min.ratio = .001,
-                               n.cores          = params$n.cores,
-                               seed             = ix.seed)  
+    cv.classic <- run.cache(aux.call, xdata, ydata, rep(1, ncol(xdata)), ix.alpha, ix.seed, 
+                            cache.prefix = 'cv.glmSparseNet.elastic.net', cache.digest = list(xdata.digest.cache))
+    flog.info('    - Finished elastic net (%d)', sum(cv.classic$coef != 0))
     
-    alpha.models <- rbind(alpha.models, tibble(alpha  = ix.alpha, 
-                                               glmnet = list(cv.classic$model), 
-                                               hub    = list(cv.degree$model), 
-                                               orphan = list(cv.orphan$model)))
+    cv.hub     <- run.cache(aux.call, xdata, ydata, penalty.factor.degree.new, ix.alpha, ix.seed, 
+                            cache.prefix = 'cv.glmSparseNet.hub', cache.digest = list(xdata.digest.cache))
+    flog.info('    - Finished hub (%d)', sum(cv.hub$coef != 0))
+    
+    cv.orphan  <- run.cache(aux.call, xdata, ydata, penalty.factor.orphan, ix.alpha, ix.seed, 
+                            cache.prefix = 'cv.glmSparseNet.orphan', cache.digest = list(xdata.digest.cache))
+    flog.info('    - Finished orphan (%d)', sum(cv.orphan$coef != 0))
+    
+    new.line <- tibble(alpha  = ix.alpha, 
+                       seed   = ix.seed,
+                       glmnet = list(cv.classic$model), 
+                       hub    = list(cv.hub$model), 
+                       orphan = list(cv.orphan$model))
+    
+    alpha.models <- rbind(alpha.models, new.line)
+    
+    save(new.line, file = sprintf('cv.value_%s_xdata-%s_ydata-%s', loose.rock::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
+    
     flog.info('  * Finished run with alpha %.3f', ix.alpha)
   }
 }
@@ -339,7 +315,7 @@ km.all <- apply(alpha.models, 1:2, function(ix.name) {
   }
 })
 
-km.all %>% as.data.frame %>%  group_by(alpha) %>% summarise_all(mean) %>% knitr::kable()
+km.all %>% as.data.frame %>%  group_by(alpha) %>% summarise_all(list(mean = mean, SE = sd)) %>% knitr::kable()
 ```
 
 ### Kaplan-Meier estimator plot
@@ -350,7 +326,8 @@ km.all %>% as.data.frame %>%
   mutate(Alpha = factor(alpha), Model = variable) %>%
   ggplot(aes(x = Alpha, y = value, color = Model)) + 
   geom_boxplot(alpha = .5) + 
-  # geom_jitter(width = 0.3) +
+  # geom_jitter(width = 0.2, size = .5) +
+  expand_limits(y = .005) +
   ggtitle('Kaplan-Meier estimator (per alpha parameter)', 
           subtitle = 'Two groups (High/Low risk of event) are estimated based on Cox model\'s coefficients')
 ```
