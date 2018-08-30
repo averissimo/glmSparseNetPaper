@@ -1,0 +1,393 @@
+---
+title: "ElasticNet baseline"
+output:
+  BiocStyle::html_document:
+      number_sections: yes
+      toc: true
+vignette: >
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
+  %\VignetteEncoding{UTF-8}
+params: 
+  seed: !r 1985 * 2
+  alpha: !r .7
+  train.percentage: !r .7
+  n.cores: !r 10
+  #
+  normalize: 'center' # max, center, none
+  log2: !r TRUE
+  foldid: !r TRUE
+  network: 'string'
+  network.cutoff: !r 0.1
+  network.trans: 'hub' # hub, orphan, none
+---
+
+# Libraries
+
+```{r, message=FALSE, warning=FALSE}
+library(glmnet)
+library(reshape2)
+library(survival)
+library(tidyverse)
+library(Vennerable)
+library(glmSparseNet)
+library(loose.rock)
+library(futile.logger)
+
+```
+
+```{r, include=FALSE}
+devtools::load_all()
+
+.Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
+.Last.value <- show.message(FALSE)
+.Last.value <- flog.layout(layout.format('[~l] ~m'))
+.Last.value <- flog.appender(appender.tee('logger.txt'))
+theme_set(theme_minimal())
+```
+
+
+# Parameters
+
+```{r, echo=FALSE}
+show.params(params)
+```
+
+# Data
+
+```{r load.data}
+my.data <- run.cache(prepare.tcga.survival.data.old, 
+                     'brca', 
+                     'primary.solid.tumor', 
+                     #
+                     #input.type                = 'rna',
+                     normalization             = params$normalize,
+                     log2.pre.normalize        = params$log2,
+                     # include.negative.survival = FALSE,
+                     handle.duplicates         = 'keep_first', 
+                     coding.genes              = TRUE,
+                     #
+                     cache.prefix              = 'tcga-data',
+                     show.message = TRUE)
+#
+clinical <- my.data$clinical
+#
+xdata     <- my.data$xdata
+ydata     <- my.data$ydata
+xdata.raw <- my.data$xdata.raw
+#
+#
+xdata.digest.cache     <- my.data$xdata.digest
+xdata.raw.digest.cache <- my.data$xdata.raw.digest
+ydata.digest.cache     <- my.data$ydata.digest
+#
+rm(my.data)
+```
+
+## Sample distribution of 5 variables
+
+*note*: This is a fixed result, regardless of seed parameter in report.
+
+```{r, echo=FALSE}
+set.seed(987654321)
+sample(seq(ncol(xdata)), 9) %>% { xdata[,.] } %>% melt %>%
+  ggplot() + 
+    geom_density(aes(value, color = X2)) + 
+    #geom_freqpoly(aes(value, color = Var2), bins = 100) + 
+    facet_wrap(~ X2, ncol = 3, scales = 'free') +
+    theme(legend.position = 'none')
+
+set.seed(987654321)
+sample(seq(ncol(xdata)), 9) %>% { xdata[,.] } %>% melt %>%
+  ggplot() + 
+    #geom_density(aes(value, color = Var2)) + 
+    geom_freqpoly(aes(value, color = X2), bins = 100) + 
+    facet_wrap(~ X2, ncol = 3, scales = 'free') +
+    theme(legend.position = 'none')
+```
+
+## Setup training and test sets
+
+```{r}
+set.seed(params$seed)
+ixs        <- balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = params$train.percentage)
+xdata.test <- xdata[ixs$test,]
+ydata.test <- ydata[ixs$test,]
+#
+xdata.train <- xdata[ixs$train,]
+ydata.train <- ydata[ixs$train,]
+
+xdata.train.digest <- glmSparseNet::digest.cache(xdata.train)
+```
+
+## Network to use in penalization
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+## Using Network or Not
+#
+#
+#
+
+# default using string from degree.type
+network <- params$network
+if (params$network == 'oldie') {
+  #
+  # Load old matrix used in SPARSA conference
+  my.env <- new.env()
+  load(sprintf('/ssd_home/averissimo/work/rpackages/brca.analysis/data/degree-%.6f.RData', .4), envir = my.env)
+  network <- my.env$degree
+  
+} else if (params$network == 'string') {
+  #
+  # Load degree of STRING network downloaded from external sources
+  network <- run.cache(string.db.homo.sapiens) %>% {
+    run.cache(build.string.network, ., use.names = 'ensembl')
+    } %>% {
+      .@x[.@x <= params$network.cutoff] <- 0
+      if (TRUE) {
+        .@x <- (.@x != 0) * 1
+      }
+      Matrix::colSums(.) + Matrix::rowSums(.)
+    }
+  
+  #
+  # Adds missing genes as nodes with 0 degree
+  
+  network <- colnames(xdata.raw)[!colnames(xdata.raw) %in% names(network)] %>% {
+   c(network, array(0, length(.), dimnames = list(.))) 
+  } %>% { .[colnames(xdata.raw)] }
+} else if (params$network == 'string.pedro') {
+  #
+  # Load degree of STRING network downloaded from external sources
+  my.env <- new.env()
+  load('/ssd_home/averissimo/work/rpackages/network.cox-big.files/saves/degree-string.RData', envir = my.env)
+  ix.names <- colnames(xdata) %in% names(my.env$degree_uw)
+  network <- my.env$degree_uw[colnames(xdata)]
+}
+
+# display Network
+if (is.character(network)) {
+  flog.info('Network to be used: %s', network)
+} else {
+  qplot(network, geom = 'freqpoly', bins = 100) + ggtitle(sprintf('Degree of nodes in %s network', params$network))
+}
+```
+
+```{r, include=FALSE}
+# Transformation function for degree before used as a penalty
+
+if (params$network.trans == 'none') {
+  network.trans <- function(x) { return(x) }
+} else if (params$network.trans == 'hub') {
+  network.trans <- glmSparseNet::hub.heuristic
+} else if (params$network.trans == 'hub') {
+  network.trans <- glmSparseNet::orphan.heuristic
+} else {
+  stop('Error: network.trans parameter not recognized.')
+}
+```
+
+# Estimating models
+
+## Model with `standardize = FALSE`
+
+```{r fit1}
+set.seed(params$seed)
+if (params$foldid) {
+  foldid <- balanced.cv.folds(ydata.train$status)$output
+} else {
+  foldid <- sample(rep(seq(10), length = nrow(ydata.train)))
+}
+set.seed(params$seed)
+fit.train.nosd <- run.cache(cv.glmSparseNet.mclapply, xdata.train, Surv(ydata.train$time, ydata.train$status), 
+                            network = network,
+                            family  = 'cox', alpha = params$alpha, 
+                            #
+                            network.options = network.options.default(trans.fun  = network.trans,
+                                                                      min.degree = .2,
+                                                                      n.cores    = params$n.cores,
+                                                                      cutoff     = params$network.cutoff),
+                            #
+                            foldid       = foldid, 
+                            mc.cores     = params$n.cores,
+                            standardize  = FALSE,
+                            cache.digest = list(xdata.train.digest))
+```
+
+## Model with `standardize = TRUE`
+
+```{r fit2}
+set.seed(params$seed)
+if (params$foldid) {
+  foldid <- balanced.cv.folds(ydata.train$status)$output
+} else {
+  foldid <- sample(rep(seq(10), length = nrow(ydata.train)))
+}
+set.seed(params$seed)
+fit.train.sd <- run.cache(cv.glmSparseNet.mclapply, xdata.train, Surv(ydata.train$time, ydata.train$status), 
+                          network = network,
+                          family  = 'cox', alpha = params$alpha, 
+                          #
+                          network.options = network.options.default(trans.fun  = network.trans,
+                                                                    min.degree = .2,
+                                                                    n.cores    = params$n.cores, 
+                                                                    cutoff     = params$network.cutoff),
+                          #
+                          foldid       = foldid, 
+                          mc.cores     = params$n.cores,
+                          standardize  = TRUE,
+                          cache.digest = list(xdata.train.digest))
+```
+
+# Results
+
+## Description of models (`standardize = FALSE`)
+
+```{r, echo=FALSE}
+plot(fit.train.nosd)
+```
+
+## Description of models (`standardize = FALSE`)
+
+```{r, echo=FALSE}
+plot(fit.train.sd)
+```
+
+## Best models
+
+```{r}
+best.model.nosd <- coef(fit.train.nosd, s = 'lambda.min')[,1] %>% { .[.!=0] }
+best.model.sd   <- coef(fit.train.sd, s = 'lambda.min')[,1] %>% { .[.!=0] }
+```
+
+## Selected features *(count)*
+
+```{r, echo=FALSE}
+c(No.Standadize = length(best.model.nosd), Standardize = length(best.model.sd))
+```
+
+Overlapping features/genes
+
+```{r, echo=FALSE}
+if(length(best.model.nosd) * length(best.model.sd) * 1 > 0) {
+  vv <- Venn(list(standardize    = names(best.model.nosd),
+                  non.standarize = names(best.model.sd))) %>% compute.Venn(type = 'squares')
+  gp <- VennThemes(vv)
+  plot(vv, gp = gp) 
+} else {
+  flog.warn('One of the models did not select any features, see section "Selected features"')
+}
+```
+
+## Kaplan-meier curves
+
+### Train
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+plot.list <- list()
+if(length(best.model.nosd) > 0) {
+  plot.list <- c(plot.list, list(draw.kaplan(best.model.nosd, xdata.train[, names(best.model.nosd)], ydata.train, plot.title = 'standardize = FALSE')$plot))
+} else {
+  flog.warn('Model without standardize does not select any variables')
+}
+  
+if(length(best.model.sd) > 0) {
+  plot.list <- c(plot.list, list(draw.kaplan(best.model.sd, xdata.train[, names(best.model.sd)], ydata.train, plot.title = 'standardize = TRUE')$plot))
+} else {
+  flog.warn('Model with standardize does not select any variables')
+}
+   
+if (length(plot.list) > 0) multiplot(plotlist = plot.list, ncol = 2)
+```
+
+### Test
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+plot.list <- list()
+if(length(best.model.nosd) > 0) {
+  plot.list <- c(plot.list, list(draw.kaplan(best.model.nosd, xdata.test[, names(best.model.nosd)], ydata.test, plot.title = 'standardize = FALSE')$plot))
+} else {
+  flog.warn('Model without standardize does not select any variables')
+}
+  
+if(length(best.model.sd) > 0) {
+  plot.list <- c(plot.list, list(draw.kaplan(best.model.sd, xdata.test[, names(best.model.sd)], ydata.test, plot.title = 'standardize = TRUE')$plot))
+} else {
+  flog.warn('Model with standardize does not select any variables')
+}
+   
+if (length(plot.list) > 0) multiplot(plotlist = plot.list, ncol = 2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r, eval=FALSE, include=FALSE}
+#
+# Use to generate multiple reporst
+#
+render.me <- function(my.list, default.list = list(alpha            = .7, 
+                                                   foldid           = FALSE,
+                                                   n.cores          = 10, 
+                                                   seed             = 1985, 
+                                                   train.percentage = .7, 
+                                                   log2             = FALSE,
+                                                   normalize        = 'none',
+                                                   network          = 'none', 
+                                                   network.cutoff   = 0,
+                                                   network.trans    = 'none')) {
+  
+  my.list <- taRifx::merge.list(my.list, default.list)
+  
+  lapply(c('center', 'max', 'none'), function(ix) {
+    return(tibble(normalize = c(ix, ix), log2 = c(TRUE,FALSE)))
+  }) %>% 
+  melt(id.vars = c('normalize', 'log2')) %>% 
+  dplyr::select(1:2) %>% {
+    for(line.ix in seq(nrow(.))) {
+      taRifx::merge.list(list(normalize = .[line.ix, 'normalize'], log2 = .[line.ix, 'log2']), my.list) %>% {
+        
+        .$foldid <- TRUE
+        output_file <- sprintf('baseline_reports/network_%s--cutoff_%.2f--trans_%s--normalize_%s--log2_%s--foldid_%s--seed_%d.html', 
+                               .$network, .$network.cutoff, .$network.trans, .$normalize, .$log2, .$foldid, .$seed)
+        
+        tryCatch(rmarkdown::render('baseline.Rmd', params = ., output_file = output_file))
+        
+        # .$foldid <- FALSE
+        # output_file <- sprintf('baseline_reports/network_%s--cutoff_%.2f--trans_%s--normalize_%s--log2_%s--foldid_%s--seed_%d.html', 
+        #                        .$network, .$network.cutoff, .$network.trans, .$normalize, .$log2, .$foldid, .$seed)
+        # tryCatch(rmarkdown::render('baseline.Rmd', params = ., output_file = output_file))
+      }
+    }
+  }
+} 
+
+for(ix.seed in c(1985*2, 1985)) {
+  # tryCatch(render.me(list(seed = ix.seed, network = 'none')))
+  tryCatch(render.me(list(seed = ix.seed, network.trans = 'hub',  network = 'string')))
+  # tryCatch(render.me(list(seed = ix.seed, network.trans = 'orphan', network = 'string')))
+  
+  #tryCatch(render.me(list(seed = ix.seed, network.trans = 'hub',  network = 'correlation', network.cutoff = .6)))
+  #tryCatch(render.me(list(seed = ix.seed, network.trans = 'hub',  network = 'covariance', network.cutoff = .1)))
+  #tryCatch(render.me(list(seed = ix.seed, network.trans = 'hub',  network = 'string.pedro')))
+  
+  #tryCatch(render.me(list(seed = ix.seed, network.trans = 'orphan', network = 'correlation', network.cutoff = .6)))
+  #tryCatch(render.me(list(seed = ix.seed, network.trans = 'orphan', network = 'covariance', network.cutoff = .1)))
+  #tryCatch(render.me(list(seed = ix.seed, network.trans = 'orphan', network = 'string.pedro')))
+}
+```
