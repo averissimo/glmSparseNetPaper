@@ -25,21 +25,22 @@
 #' @export
 #'
 #' @examples
-#' # # Install a data package to load cancer data
-#' # source("https://bioconductor.org/biocLite.R")
-#' # biocLite(paste0('https://github.com/averissimo/tcga.data/releases/download/',
-#' #                 '2016.12.15-brca/brca.data_1.0.tar.gz'))
-#' # # Run
-#' # prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first')
-#' # prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first', input.type = 'dna')
+#' \dontrun{
+#'     # Install a data package to load cancer data
+#'     source("https://bioconductor.org/biocLite.R")
+#'     biocLite(paste0('https://github.com/averissimo/tcga.data/releases/download/',
+#'                     '2016.12.15-brca/brca.data_1.0.tar.gz'))
+#'     prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first')
+#'     prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first', input.type = 'dna')
+#' }
 prepare.tcga.survival.data <- function(project                      = 'brca',
                                        tissue.type                  = 'primary.solid.tumor',
                                        input.type                   = 'rna',
-                                       center                       = TRUE,
-                                       log2.normalize               = TRUE,
-                                       include.negative.survival    = TRUE,
+                                       normalization                = 'none',
+                                       log2.pre.normalize           = FALSE,
+                                       include.negative.survival    = FALSE,
                                        handle.duplicates            = 'keep_first',
-                                       coding.genes                 = FALSE) {
+                                       only.coding.genes            = FALSE) {
 
   package.name <- paste0(project, '.data')
 
@@ -77,19 +78,27 @@ prepare.tcga.survival.data <- function(project                      = 'brca',
     #
     # Normalize
 
-    if (log2.normalize == TRUE) {
+    if (log2.pre.normalize == TRUE) {
       xdata.raw <- log2(xdata.raw + 1)
     }
 
-    if (center == TRUE) {
-      xdata.raw <- scale(xdata.raw, center = TRUE, scale = TRUE)
-    } else {
-      xdata.raw <- apply(xdata, 1, function(row) {
-        if (max(abs(row)) == 0) {
-          return(row)
+    if (is.null(normalization)) {
+      normalization = 'none'
+    }
+
+    if (normalization == 'center') {
+      # scales the columns of the matrix
+      xdata.raw2 <- scale(xdata.raw, center = TRUE, scale = TRUE)
+    } else if (normalization == 'max') {
+      # scales the columns by maximum value
+      xdata.raw2 <- apply(xdata.raw, 2, function(feature) {
+        if (max(abs(feature)) == 0) {
+          return(feature)
         }
-        return(row / max(abs(row)))
+        return(feature / max(abs(feature)))
       })
+    } else {
+      xdata.raw2 <- xdata.raw
     }
   } else if (input.type == 'dna') {
     utils::data("mutation", package = package.name, envir = dat.env)
@@ -98,58 +107,41 @@ prepare.tcga.survival.data <- function(project                      = 'brca',
     # remove genes that don't have any variability
     sd.xdata  <- sapply(seq(ncol(xdata.raw)), function(ix) { stats::sd(xdata.raw[,ix]) })
     xdata.raw <- xdata.raw[,sd.xdata != 0]
+    xdata.raw2 <- xdata.raw
   }
 
 
 
-  if (coding.genes) {
+  if (only.coding.genes) {
     futile.logger::flog.info('Using only coding genes:')
-    coding <- loose.rock::coding.genes()
-    xdata.raw <- xdata.raw[,colnames(xdata.raw) %in% coding$ensembl_gene_id]
+    coding <- glmSparseNet::run.cache(loose.rock::coding.genes)
+    xdata.raw2 <- xdata.raw2[,colnames(xdata.raw2) %in% coding$ensembl_gene_id]
     futile.logger::flog.info('  * total coding genes: %d', length(coding$ensembl_gene_id))
-    futile.logger::flog.info('  * coding genes in data: %d (new size of xdata)', ncol(xdata.raw))
+    futile.logger::flog.info('  * coding genes in data: %d (new size of xdata)', ncol(xdata.raw2))
   }
 
   if (handle.duplicates == 'keep_first') {
-    xdata <- xdata.raw[!duplicated(strtrim(rownames(xdata.raw), 12)),]
+    xdata <- xdata.raw2[!duplicated(strtrim(rownames(xdata.raw2), 12)),]
   } else if (handle.duplicates == 'keep_all') {
-    xdata <- xdata.raw
+    xdata <- xdata.raw2
   }
 
   #
   # YDATA
 
-  # load data
-  utils::data('clinical', package = package.name, envir = dat.env)
-  utils::data('gdc',      package = package.name, envir = dat.env)
-  clinical  <- dat.env$clinical
-  follow.up <- dat.env$gdc$follow.up
+  curated <- glmSparseNet::run.cache(curatedTCGAData::curatedTCGAData,
+                                   project, 'RNASeq2GeneNorm', FALSE)
 
-  # TODO: remove and use from package
-  aa <- update.survival.from.followup(clinical$all, follow.up) %>% as.data.frame
-  rownames(aa) <- aa$bcr_patient_barcode
+  ydata <- curated@colData %>% as.data.frame %>%
+    dplyr::select(patientID, status = vital_status, days_to_last_followup, days_to_death) %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(time = max(-Inf, days_to_last_followup, days_to_death, na.rm = TRUE),
+                  status = status == 1) %>%
+    dplyr::select(patientID, time, status) %>%
+    as.data.frame
 
-  clinical[[tissue.type]][, 'vital_status']    <- aa[clinical[[tissue.type]]$bcr_patient_barcode, 'vital_status']
-  clinical[[tissue.type]][, 'surv_event_time'] <- aa[clinical[[tissue.type]]$bcr_patient_barcode, 'surv_event_time']
-
-  # load only patients with valid bcr_patient_barcode (non NA)
-  ix.clinical <- !is.na(clinical[[tissue.type]]$bcr_patient_barcode)
-
-  # build ydata data.frame
-  ydata <- data.frame(time   = clinical[[tissue.type]]$surv_event_time,
-                      status = clinical[[tissue.type]]$vital_status)[ix.clinical,]
-
-  #
-  # Shift time value if option to include all is present
-
-  if (include.negative.survival && min(ydata$time, na.rm = TRUE) < 0) {
-    ydata <- ydata %>%
-      dplyr::mutate(time.tcga = time, time = time + abs(min(time, na.rm = TRUE)) + 1)
-  }
-
-  # name each row with patient code
-  rownames(ydata) <- clinical[[tissue.type]]$bcr_patient_barcode[ix.clinical]
-
+  rownames(ydata) <- ydata$patientID
+  ydata <- ydata %>% dplyr::select(time, status)
 
   # removing patients with:
   #  * negative follow-up
@@ -161,11 +153,12 @@ prepare.tcga.survival.data <- function(project                      = 'brca',
   # status description:
   #  * == 1 for dead (event happening)
   #  * == 0 for alive (censored)
-  ydata$status <- ydata$status != 'Alive'
+  # ydata$status <- ydata$status != 'Alive'
 
   # Multiple samples for same individual
   #  rename by appending to name
   xdata <- xdata[strtrim(rownames(xdata), 12) %in% rownames(ydata),]
+
   if (length(strtrim(rownames(xdata), 12)) != length(unique(strtrim(rownames(xdata), 12)))) {
     warning(sprintf('There are multiple samples for the same individual.. using strategy: \'%s\'', handle.duplicates))
     #
@@ -181,18 +174,21 @@ prepare.tcga.survival.data <- function(project                      = 'brca',
     rownames(xdata) <- strtrim(rownames(xdata), 12)
   }
 
+  ydata <- ydata[rownames(ydata) %in% strtrim(rownames(xdata), 12),]
+  ydata <- ydata[strtrim(rownames(xdata), 12), ]
+
   #
   # Pre-calculated sha256 to use in run.cache if necessary
 
-  xdata.digest     <- loose.rock::digest.cache(xdata)
-  xdata.raw.digest <- loose.rock::digest.cache(xdata.raw)
+  xdata.digest     <- glmSparseNet::digest.cache(xdata)
+  xdata.raw.digest <- glmSparseNet::digest.cache(xdata.raw)
 
-  ydata.digest     <- loose.rock::digest.cache(ydata)
+  ydata.digest     <- glmSparseNet::digest.cache(ydata)
 
   return(list(xdata            = xdata,
               xdata.raw        = xdata.raw,
               ydata            = ydata,
-              clinical         = clinical,
+              clinical         = colData(curated[rownames(ydata),]),
               xdata.digest     = xdata.digest,
               xdata.raw.digest = xdata.raw.digest,
               ydata.digest     = ydata.digest))

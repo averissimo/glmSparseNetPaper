@@ -28,12 +28,11 @@ glmSparseNet.cox <- function(xdata,
   result <- glmSparseNet.cox_(xdata,
                               ydata,
                               target.vars,
-                              network,
-                              xdata.digest,
-                              cache.prefix,
-                              force.recalc,
+                              network          = network,
                               alpha            = alpha,
-                              nlambda          = 500,
+                              xdata.digest     = xdata.digest,
+                              force.recalc     = force.recalc,
+                              nlambda          = 300,
                               lambda.min.ratio = lambda.min.ratio,
                               ...)
 
@@ -45,7 +44,7 @@ glmSparseNet.cox <- function(xdata,
                                 alpha            = alpha,
                                 nlambda          = 1000,
                                 xdata.digest     = xdata.digest,
-                                cache.prefix     = cache.prefix,
+                                force.recalc     = force.recalc,
                                 lambda.min.ratio = .00001,
                                 ...)
   }
@@ -71,7 +70,7 @@ glmSparseNet.cox_ <- function(xdata,
                               target.vars,
                               network          = 'correlation',
                               xdata.digest     = NULL,
-                              cache.prefix     = 'glmSparseNet.cache',
+                              cache.prefix     = 'glmSparseNet.glmnet.model',
                               force.recalc     = FALSE,
                               ...) {
 
@@ -79,13 +78,12 @@ glmSparseNet.cox_ <- function(xdata,
                          xdata,
                          Surv(ydata$time, ydata$status),
                          family           ='cox',
-                         standardize      = F,
+                         standardize      = FALSE,
                          network          = network,
-                         network.options  = network.options.default(min.degree = .2),
                          ...,
                          #
                          force.recalc = force.recalc,
-                         cache.prefix = gsub('_', '.', gsub('_old', '', prefix)),
+                         cache.prefix = cache.prefix,
                          cache.digest = list(xdata.digest))
 
   if (any(new.model$df == target.vars)) {

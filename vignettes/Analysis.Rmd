@@ -25,25 +25,65 @@ params:
   degree.correlation: 'pearson'
   degree.cutoff: !r 0
   #
+  # Normalization of xdata
+  log2: !r TRUE
+  normalization: 'max' # center, max, none
+  #
   degree.type: "string" # covariance, correlation, correlation.inv, oldie, sparsebn, string
   #
   handle.duplicates: 'keep_first' # keep_all , keep_first
   #
   # glmnet parameter
-  alpha: !r .7
+  alpha: !r .2
   # subset of variables to be used (Inf for all)
   subset: !r Inf
   train: !r .8
   # number of times that training set is tested
-  ntimes: !r 50
+  ntimes: !r 1000
   # target variables that models should output
-  target.vars: !r list(selected = 25)
+  target.vars: !r list(glmnet = 83, hub = 39, orphan = 101)
   #
-  seed: !r 2018
-  n.cores: !r 4
+  seed: !r 1985
+  n.cores: !r 14
   #
   calc.params.old: !r FALSE
 ---
+
+# Overview
+
+**Data**
+
+* *TCGA project*: **`r params$project`**
+* *Tissue type*: **`r params$tissue`**
+    * `r if(params$coding.genes) {'Only using coding genes'} else {'Using all genes (coding and non-coding)'}`
+* *Degree calculation*: **`r params$degree.type`**
+
+**Normalization**
+
+* *LOG2 transform*: **`r if (params$log2) { 'yes' } else { 'no' }`**
+* *Gene by gene*: **`r params$normalization`**
+
+**Model options**
+
+* *Alpha in ElasticNet*: **`r params$alpha`**
+* *Train/Test*: **`r params$train * 100`%**
+* *Target variables*: `r paste(sapply(names(params$target.vars), function(ix) {sprintf('%s: %d', ix, params$target.vars[[ix]])}), collapse = ', ')`
+  
+**Network processing**
+
+* *Degree calculation*: `r params$degree.type`
+* *Edge cutoff*: **`r params$degree.cutoff`**
+* **`r if (params$degree.unweighted) { 'Unweighted' } else { 'Weighted' }`** edges
+
+cor/cov method: `r params$degree.correlation` 
+
+  * *only applies if network type is correlation/covariance*
+
+```{r, include=FALSE, eval=FALSE}
+rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
+rmarkdown::render('Analysis.Rmd', output_file = 'brca-max.html', params = list(normalization = 'max'), output_format = BiocStyle::html_document())
+```
+
 
 ```{r setup, include=FALSE}
 # ComBat(matrix and category_id)
@@ -52,14 +92,8 @@ params:
 knitr::opts_chunk$set(echo = TRUE, collapse = TRUE, tidy = TRUE)
 ```
 
-```{r, eval=FALSE}
-rmarkdown::render('Analysis.Rmd')
-```
-
-
-## Libraries
-
-```{r, messages=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+# Libraries
 library(futile.logger)
 library(parallel)
 library(glmnet)
@@ -77,10 +111,10 @@ library(survival.owl)
 library(biclust)
 #
 library(glmSparseNet)
-```
 
-```{r, include=FALSE}
-devtools::install_github('averissimo/glmnet')
+# In case classic glmnet is used
+library(doMC)
+registerDoMC(cores=params$n.cores)
 #
 devtools::load_all()
 #
@@ -91,69 +125,36 @@ devtools::load_all()
 theme_set(theme_minimal())
 ```
 
-## Parameters
-
-```{r parms, echo=FALSE}
-max.chars <- max(sapply(names(params), nchar))
-for (ix.names in sort(names(params))) {
-  prefix <- paste(array(' ', max.chars - nchar(ix.names)), collapse = '')
-  if (is.vector(params[[ix.names]]) && length(params[[ix.names]]) == 1) {
-    if (is.list(params[[ix.names]])) {
-      flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
-    }
-    else if (is.character(params[[ix.names]])) {
-      flog.info('  %s%s: %s', prefix, ix.names, params[[ix.names]])
-    }  else if (is.infinite(params[[ix.names]])) {
-      flog.info('  %s%s: %f', prefix, ix.names, params[[ix.names]])
-    } else if (is.integer(params[[ix.names]])) {
-      flog.info('  %s%s: % 11d', prefix, ix.names, params[[ix.names]])
-    } else {
-      flog.info('  %s%s: % 11.3f', prefix, ix.names, params[[ix.names]])
-    }
-  } else if (is.vector(params[[ix.names]])) {
-    flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
-  } else {
-    flog.info('  %s%s: (i do not know how to display this)', prefix, ix.names)
-  }
-}
-```
-
 # Load and normalize data
+
+**Data**
+
+* *TCGA project*: **`r params$project`**
+* *Tissue type*: **`r params$tissue`**
+    * `r if(params$coding.genes) {'Only using coding genes'} else {'Using all genes (coding and non-coding)'}`
+* *Degree calculation*: **`r params$degree.type`**
+
+**Normalization**
+
+* *LOG2 transform*: **`r if (params$log2) { 'yes' } else { 'no' }`**
+* *Gene by gene*: **`r params$normalization`**
 
 ## Load TCGA data
 
-```{r, eval=FALSE}
-# xdata     - matrix with FPKM gene level expression
-# ydata     - survival data
-# xdata.raw - original matrix with possible multiple tissue samples from same indiviudal
-prepare.tcga.survival.data(params$project, 
-                           params$tissue, 
-                           #
-                           handle.duplicates            = params$handle.duplicates, 
-                           center                       = TRUE,
-                           log2.normalize               = TRUE,
-                           include.negative.survival    = FALSE,
-                           input.type                   = 'rna',
-                           #
-                           cache.prefix = 'tcga-data',
-                           coding.genes = params$coding.genes)
-```
-
-
-```{r load.data, include=FALSE}
-my.data <- run.cache(prepare.tcga.survival.data, 
-                     params$project, 
-                     params$tissue, 
+```{r load.data}
+my.data <- run.cache(prepare.tcga.survival.data.old, 
+                     'brca', 
+                     'primary.solid.tumor', 
                      #
-                     handle.duplicates            = params$handle.duplicates, 
-                     center                       = TRUE,
-                     log2.normalize               = TRUE,
-                     include.negative.survival    = FALSE,
-                     input.type                   = 'rna',
+                     #input.type                = 'rna',
+                     normalization             = params$normalization,
+                     log2.pre.normalize        = params$log2,
+                     # include.negative.survival = FALSE,
+                     handle.duplicates         = 'keep_first', 
+                     coding.genes              = TRUE,
                      #
-                     cache.prefix = 'tcga-data',
-                     coding.genes = params$coding.genes,
-                     show.message = T)
+                     cache.prefix              = 'tcga-data',
+                     show.message = TRUE)
 #
 clinical <- my.data$clinical
 #
@@ -171,6 +172,15 @@ rm(my.data)
 
 ## Load degree data
 
+**Network processing**
+
+* *Degree calculation*: `r params$degree.type`
+* *Edge cutoff*: **`r params$degree.cutoff`**
+* **`r if (params$degree.unweighted) { 'Unweighted' } else { 'Weighted' }`** edges
+
+cor/cov method: `r params$degree.correlation` 
+
+  * *only applies if network type is correlation/covariance*
 
 ```{r degree.load}
 if (params$degree.type == 'oldie') {
@@ -220,6 +230,12 @@ if (params$degree.type == 'oldie') {
   degree <- colnames(xdata.raw)[!colnames(xdata.raw) %in% names(degree)] %>% {
    c(degree, array(0, length(.), dimnames = list(.))) 
   } %>% { .[colnames(xdata.raw)] }
+} else if (params$degree.type == 'string.pedro') {
+  #
+  # Load degree of STRING network downloaded from external sources
+  load('/ssd_home/averissimo/work/rpackages/network.cox-big.files/saves/degree-string.RData')
+  ix.names <- colnames(xdata) %in% names(degree_uw)
+  degree <- degree_uw[colnames(xdata)]
 }
 ```
 
@@ -257,6 +273,7 @@ flog.info('Loaded data from %s TCGA', params$project)
 flog.info('              type of tissue: %s', params$tissue)
 flog.info('  observations (individuals): %d (%d event / %d censored)', nrow(xdata), sum(ydata$status), sum(!ydata$status))
 flog.info('           variables (genes): %d', ncol(xdata))
+flog.info('             non-zero degree: %d', sum(degree != 0))
 ```
 
 ### Survival
@@ -273,14 +290,14 @@ ggplot(ydata.year) + geom_freqpoly(aes(time, color = status), bins = 150) +
   theme(legend.position = 'top')
 ```
 
+```{r test.clinical.variables, fig.height=15, echo=FALSE, eval=FALSE}
 # Test physiological Variables
 
-*note:* Plots with p-value `<= 0.05` are shown. Two types of p-values are used as criteria:
+# *note:* Plots with p-value `<= 0.05` are shown. Two types of p-values are used as criteria:
 
-1. Univariate cox model
-1. Log rank test when separating between high and low risk group
+# 1. Univariate cox model
+# 1. Log rank test when separating between high and low risk group
 
-```{r test.clinical.variables, fig.height=15, echo=FALSE}
 all.plots <- run.cache(test.all.clinical, clinical, ydata)
 
 multiplot(plotlist = all.plots$plot.list, layout = all.plots$layout)
@@ -308,37 +325,20 @@ xdata.train.digest <- digest.cache(xdata.train[, xdata.ix])
 ## Preparing degree vector
 
 * Normalize degree between 0 and 1
-* DegreeCox: 1 - degree
-* OrphanCox: degree
+* Hub: heuristic( 1 - degree )
+* Orphan: heuristic( degree )
 * `trans.fun` is a double power to scale the values
 
 see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
 
 ```{r transformation_function}
 # see ?glmSparseNet::heuristic.scale
-trans.fun <- function(x) { heuristic.scale(x)}
+trans.fun <- function(x) { heuristic.scale(x) + 0.2}
 ```
 
 ```{r prepare.penalty, echo=FALSE}
 original.penalty.factor        <- degree[xdata.ix.no.added]
 names(original.penalty.factor) <- colnames(xdata.train[,xdata.ix.no.added])
-
-# if (params$add.age.at.diag) {
-#   #
-#   age.at.diag.norm <- c(xdata.train[,'age.at.diag'],
-#                         xdata.test[,'age.at.diag'])
-#   age.at.diag.norm <- age.at.diag.norm[colnames(xdata)]
-#   age.cov <- unlist(mclapply(xdata.ix.no.added, function(ix) {
-#     co.exp <- cov(age.at.diag.norm, xdata[ix,], method = 'pearson')
-#     if (abs(co.exp) >= params$degree.perct)
-#       return(co.exp)
-#     else {
-#       return(0)
-#     }
-#   }, mc.cores = params$n.cores))
-#   original.penalty.factor <- original.penalty.factor + age.cov
-#   original.penalty.factor <- c(original.penalty.factor, age.at.diag = sum(age.cov))
-# }
 
 ##########################
 #                        #
@@ -346,8 +346,8 @@ names(original.penalty.factor) <- colnames(xdata.train[,xdata.ix.no.added])
 #                        #
 ##########################
 original.penalty.factor[is.na(original.penalty.factor)] <- 0
-norm.orig.penalty.factor <- original.penalty.factor / max(original.penalty.factor[!is.na(original.penalty.factor)])
-
+norm.orig.penalty.factor <- original.penalty.factor / max(original.penalty.factor[!is.na(original.penalty.factor)], 
+                                                          na.rm = TRUE)
 #
 #
 # DegreeCox (old and log(old))
@@ -368,12 +368,18 @@ penalty.factor.degree.old[inf.ix] <- max(non.log) + 1
 #
 # DegreeCox heuristic
 #
-penalty.factor.degree.new <-trans.fun(1 - norm.orig.penalty.factor)
+
+tmp.degree_new                        <- norm.orig.penalty.factor
+tmp.degree_new[is.na(tmp.degree_new)] <- 0
+penalty.factor.degree.new             <-trans.fun(1 - tmp.degree_new)
 
 #
 # OrphanCox
 #
-penalty.factor.orphan <- trans.fun(norm.orig.penalty.factor)
+
+tmp.orphan                    <- norm.orig.penalty.factor
+tmp.orphan[is.na(tmp.orphan)] <- 1
+penalty.factor.orphan         <- trans.fun(tmp.orphan)
 
 my.df <- data.frame(ix                        = seq_along(penalty.factor.degree.old), 
                     penalty.factor.degree.old = penalty.factor.degree.old, 
@@ -400,15 +406,21 @@ levels(transf.d$Type) <- levels(transf.d$Type) %>%
   gsub('penalty.factor.degree.new', 'Degree (heuristic)', .) %>%
   gsub('penalty.factor.orphan', 'Orphan', .)
 
+if (!params$calc.params.old) {
+  transf.d <- transf.d %>% 
+    filter(Type != 'Degree (old)') %>%
+    filter(Type != 'Degree (log(old))')
+}
 
 #degree.factor.freq.plot <- 
 ggplot(transf.d) +
   geom_freqpoly(aes(value, color = Type), alpha = 0.8, bins = 200, size = 1.5) +
-  theme_minimal() + theme(legend.position = 'top') +
+  theme_minimal() + theme(legend.position = 'none') +
   facet_wrap( ~ Type, ncol = 1, scale = 'free_x') +
   scale_y_continuous(trans = 'log10') +
   xlab('Penalty') +
-  ylab('Frequency count (log10 scale)')
+  ylab('Frequency count (log10 scale)') + 
+  ggtitle('Non scale on X')
 ```
 
 ```{r plots_x_scale, echo=FALSE, fig.height=10, warning=FALSE}
@@ -426,18 +438,22 @@ levels(transf.d$Type) <- levels(transf.d$Type) %>%
   gsub('penalty.factor.degree.new', 'Degree (heuristic)', .) %>%
   gsub('penalty.factor.orphan', 'Orphan', .)
 
+if (!params$calc.params.old) {
+  transf.d <- transf.d %>% 
+    filter(Type != 'Degree (old)') %>%
+    filter(Type != 'Degree (log(old))')
+}
 
-#degree.factor.freq.plot <- 
 ggplot(transf.d) +
   geom_freqpoly(aes(value, color = Type), alpha = 0.8, bins = 200, size = 1.5) +
-  theme_minimal() + theme(legend.position = 'top') +
+  theme_minimal() + theme(legend.position = 'none') +
   facet_wrap( ~ Type, ncol = 1, scale = 'free_x') +
   scale_y_continuous(trans = 'log10') +
   scale_x_continuous(trans = 'log10') +
   xlab('Penalty (log10 scale)') +
-  ylab('Frequency count (log10 scale)')
+  ylab('Frequency count (log10 scale)') + 
+  ggtitle('Log scale on X')
 ```
-
 
 # Model Inference
 
@@ -475,7 +491,7 @@ outer.result <- mclapply(seq_along(glmnet.params), function(ix) {
                               alpha        = params$alpha,
                               network      = el$penalty, 
                               xdata.digest = xdata.train.digest, 
-                              cache.prefix = ix.cache)
+                              force.recalc = FALSE)
   )
   
   #
@@ -497,11 +513,15 @@ flog.info('Number of variables per model:')
 for (ix in names(coefs)) {
   flog.info('  * %s:\t %d variables', ix, sum(coefs[[ix]] != 0))
 }
+flog.info('')
+flog.info('note, selected variables could be slightly different from target, to have more accuracy increase nlambda in code')
 ```
 
 # Results
 
 ## Relative risk distribution
+
+Calculated using the inferred models and the train/test datasets. *The higher the better*.
 
 ```{r fitted.test.train.orphan, include=FALSE}
 build.fit.df <- function(obj) {
@@ -530,7 +550,7 @@ for (ix.name in names(models)) {
 fitted.network <- run.cache(build.fit.df, this.list, show.message = F)
 ```
 
-```{r risk, fig.height=18}
+```{r risk, fig.height=18, echo=FALSE}
 ggplot(fitted.network) +
   geom_freqpoly(aes(relative.risk, color = set), bins = 150) + theme_minimal() +
   geom_vline(aes(xintercept = mean), linetype = 'dotted', color = '#999999') +
@@ -548,12 +568,12 @@ km.train <- km.test <- list()
 #
 for (ix.name in names(coefs)) {
   this.coef <- list(ix.name = coefs[[ix.name]])
-  km.train[[ix.name]] <- this.coef %>% my.draw.kaplan(plot.title = 'Train set', xdata.train[, xdata.ix], ydata.train)
-  km.test[[ix.name]]  <- this.coef %>% my.draw.kaplan(plot.title = 'Test set',  xdata.test[, xdata.ix],  ydata.test)
+  km.train[[ix.name]] <- this.coef %>% glmSparseNetPaper::my.draw.kaplan(plot.title = 'Train set', xdata.train[, xdata.ix], ydata.train)
+  km.test[[ix.name]]  <- this.coef %>% glmSparseNetPaper::my.draw.kaplan(plot.title = 'Test set',  xdata.test[, xdata.ix],  ydata.test)
 }
 ```
 
-```{r plot.km, echo=FALSE}
+```{r plot.km, echo=FALSE, fig.height=20}
 my.km.train <- list()
 my.km.test <- list()
 ix <- 1
@@ -573,7 +593,7 @@ multiplot(plotlist = my.km.train, ncol = 1, layout = matrix(seq_along(my.km.trai
 c.index.train <- list()
 c.index.test  <- list()
 
-flog.info('C-index for train set:')
+#flog.info('C-index for train set:')
 
 #
 #
@@ -584,13 +604,13 @@ for (ix.name in names(coefs)) {
   c.index.train[[ix.name]] <- fit.risk(coefs[[ix.name]], xdata.train, ydata.train, ix.name,  show.message = TRUE)
 }
 
-flog.info('')
+#flog.info('')
 #
 #
 # Test
 #
 
-flog.info('C-index for test set:')
+#flog.info('C-index for test set:')
 
 for (ix.name in names(coefs)) {
   c.index.test[[ix.name]] <- fit.risk(coefs[[ix.name]], xdata.test, ydata.test, ix.name,  show.message = TRUE)
@@ -624,7 +644,7 @@ knitr::kable(table.data)
 
 ## Non-zero genes
 
-```{r, include=FALSE}
+```{r non.zero.pre, include=FALSE}
 coefs.v <- list()
 non.zero.df.result <- NULL
 for (ix.name in names(coefs)){
@@ -690,26 +710,6 @@ for (type in unique(all.origin)) {
 }
 ```
 
-#### Same model type *(either degree, classic or orphan)* with different lambdas
-
-```{r}
-for (type in unique(all.model)) {
-  type <- gsub('degree', 'degree_new', type)
-  ll <- list()
-  for (ix.name in all.names[which(grepl(sprintf('^%s', type), all.names))]) {
-     label <- gsub(sprintf('^%s\\.', type), '', ix.name)
-     label <- gsub('glmnet', 'classic', label)
-     label <- gsub('cv\\.', '', label)
-     label <- proper(label)
-     ll[[label]] <- sort(non.zero.df.out$gene.id[!is.na(non.zero.df.out[, sprintf('coef.%s', ix.name)])])
-  }
-  tryCatch({
-    vv <- Venn(ll)
-    gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = FALSE)), top= sprintf('Model: %s', proper(type)))
-  }, error = function(err) { flog.error('Probel with %s', err)})
-}
-```
-
 ### Table of genes in models
 
 ```{r genes.table, echo=FALSE}
@@ -718,20 +718,21 @@ knitr::kable(non.zero.df.out)
 
 ## Hallmarks of Cancer links
 
-```{r hallmarks, fig.width=10, warning=FALSE}
+```{r hallmarks, fig.width=10, warning=FALSE, echo=FALSE}
 my.hallmarks <- hallmarks(non.zero.df.out$gene.name)
 
 df.no.hallmarks <- data.frame(gene.name = my.hallmarks$no.hallmakrs, stringsAsFactors = FALSE)
 
 for (ix.name in names(coefs)) {
-  df.no.hallmarks[, ix.name] <- 1 - (df.no.hallmarks$gene.name %in% non.zero.df.out[!is.na(non.zero.df.out[[paste0('coef.',ix.name)]]), 'gene.name']) * 1
+  df.no.hallmarks[, ix.name] <- (df.no.hallmarks$gene.name %in% non.zero.df.out[!is.na(non.zero.df.out[[paste0('coef.',ix.name)]]), 'gene.name']) * 1
 }
-ggplot(melt(df.no.hallmarks, id.vars = 'gene.name'), aes(gene.name,variable, fill=value)) + geom_raster() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-
+melt(df.no.hallmarks, id.vars = 'gene.name') %>%
+  filter(value > 0) %>%
+  ggplot(aes(gene.name,variable, fill=value)) + geom_raster() + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = 'none')
 ```
 
-```{r biclust, fig.height=10}
+```{r biclust, fig.height=10, echo=FALSE}
 df.scaled <- my.hallmarks$hallmarks
 df.scaled <- data.frame(gene.name = rownames(df.scaled), df.scaled, stringsAsFactors = FALSE)
 
@@ -766,8 +767,12 @@ for (ix.name in names(coefs)) {
 # `r params$ntimes` Runs
 
 ```{r calc_ntimes, echo=FALSE, eval=TRUE}
-if (params$train == 1) {
-  flog.info("Train and test sets are the same, won't calculate %d times with random seeds", params$ntimes)
+if (params$train >= 1) {
+  flog.info("Train and test sets are the same, won't calculate %d times with random seeds", params$train)
+  big.df <- data.frame()
+} else if (params$ntimes == 1) {
+  flog.info("Running only %d times, so won't calculate any more runs. Result above should suffice", params$ntimes)
+  big.df <- data.frame()
 } else {
   suppressWarnings(rm(xdata.train, xdata.test, ydata.train, ydata.test))
   set.seed(params$seed)
@@ -825,7 +830,7 @@ if (nrow(big.df) > 0) {
 
 Separated by high and low risk groups
 
-```{r pvalue.itre, echo=FALSE}
+```{r pvalue.itre, echo=FALSE, fig.height=15}
 if (nrow(big.df) > 0) {
   
   big.df %>%
@@ -849,40 +854,72 @@ if (nrow(big.df) > 0) {
 ```
 
 ```{r}
-consensus <- list()
+if (nrow(big.df) > 0) {
+  consensus <- list()
+  all.conse <- list()
+  
+  for (ix in ntimes.results) {
+   for (ix.2 in names(ix$coefs)) {
+      all.conse[[ix.2]] <- c(all.conse[[ix.2]], (ix$coefs[[ix.2]] %>% { 
+        names(.[. != 0]) 
+      } ))
+      consensus[[ix.2]] <- unique(c(consensus[[ix.2]], (ix$coefs[[ix.2]] %>% { 
+        names(.[. != 0]) 
+      } )))
+    }
+  }
+  all.conse.tbl <- lapply(all.conse, table)
+  # consensus.external <- lapply(consensus, gene.names)
+}
+```
 
-for (ix in ntimes.results) {
-  for (ix.2 in names(ix$coefs)) {
-    consensus[[ix.2]] <- unique(c(consensus[[ix.2]], (ix$coefs[[ix.2]] %>% { names(.[. != 0]) } )))
+```{r consensus.histogram, warning=FALSE, fig.height=10, echo=FALSE}
+melt(all.conse) %>%
+  mutate(L1.suffix = sub('[a-z0-9_]+\\.', '', L1)) %>%
+  mutate(L1.prefix = sub('\\.[a-z0-9_]+\\.[a-z0-9_]+$', '', L1)) %>%
+  #filter(value > 25) %>%
+  ggplot() +
+  geom_histogram(aes(value, color = L1.prefix, fill = L1.prefix), alpha = .4, stat = 'count') +
+  theme(legend.position = 'top', axis.text.y = element_blank()) +
+  xlab('Genes') + ylab('Number of times gene is selected') +
+  facet_wrap( ~ L1.suffix, ncol = 1)
+```
+
+```{r consensus.count, echo=FALSE}
+melt(all.conse.tbl) %>%
+  mutate(L1.suffix = sub('[a-z0-9_]+\\.', '', L1)) %>%
+  #filter(value > 25) %>%
+  ggplot() +
+  geom_point(aes(Var.1, value, color = L1), alpha = .4) +
+  facet_wrap( ~ L1) +
+  theme(legend.position = 'top', axis.text.y = element_blank()) +
+  xlab('Genes') + ylab('Number of times gene is selected')
+```
+
+
+## Overlap between variables selected
+
+```{r consensus.venn, echo=FALSE}
+if (nrow(big.df) > 0) {
+  all.names  <- names(coefs)
+  all.names <- all.names[grep('^(degree_new)|^(orphan\\.)|^(glmnet\\.)', all.names)]
+  all.model  <- unique(gsub('^([a-zAZ]+)\\.(.+)$', '\\1', gsub('_new', '', all.names)))
+  all.origin <- gsub('^([a-zAZ]+)\\.(.+)$', '\\2', gsub('_new', '', all.names))
+  
+  for (type in unique(all.origin)) {
+    ll <- list()
+    for (ix.name in all.names[which(grepl(type, all.names))]) {
+       label <- gsub(sprintf('\\.%s', type), '', ix.name)
+       label <- gsub('glmnet', 'classic', label)
+       label <- proper(label)
+       ll[[label]] <- sort(consensus[[ix.name]])
+    }
+    tryCatch({
+      vv <- Venn(ll)
+      gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = FALSE)), top= sprintf('Target variables: %s', proper(type)))
+    }, error = function(err) { flog.error('Probel with %s', err)})
   }
 }
-
-consensus.external <- lapply(consensus, gene.names)
-```
-
-```{r}
-vv <- Venn(list(GLMNET = consensus.external$glmnet.selected.25$external_gene_name,
-           Degree = consensus.external$degree_new.selected.25$external_gene_name,
-           Orphan = consensus.external$orphan.selected.25$external_gene_name)) %>% compute.Venn
-gp <- VennThemes(vv)
-plot(vv, gp = gp)
-```
-
-```{r}
-sort(consensus.external$glmnet.selected.25$external_gene_name)
-```
-
-```{r}
-sort(consensus.external$degree_new.classic.cv.28$external_gene_name)
-```
-
-```{r}
-sort(consensus.external$orphan.classic.cv.28$external_gene_name)
-```
-
-```{r}
-hall <- hallmarks(consensus.external$degree_new.classic.cv.28$external_gene_name, metric = 'cprob')
-hall$heatmap + ggtitle('') + theme(legend.position = 'bottom')
 ```
 
 
@@ -896,6 +933,32 @@ hall$heatmap + ggtitle('') + theme(legend.position = 'bottom')
 
 
 
+# Parameters for the report
+
+```{r parms, echo=FALSE}
+max.chars <- max(sapply(names(params), nchar))
+for (ix.names in sort(names(params))) {
+  prefix <- paste(array(' ', max.chars - nchar(ix.names)), collapse = '')
+  if (is.vector(params[[ix.names]]) && length(params[[ix.names]]) == 1) {
+    if (is.list(params[[ix.names]])) {
+      flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
+    }
+    else if (is.character(params[[ix.names]])) {
+      flog.info('  %s%s: %s', prefix, ix.names, params[[ix.names]])
+    }  else if (is.infinite(params[[ix.names]])) {
+      flog.info('  %s%s: %f', prefix, ix.names, params[[ix.names]])
+    } else if (is.integer(params[[ix.names]])) {
+      flog.info('  %s%s: % 11d', prefix, ix.names, params[[ix.names]])
+    } else {
+      flog.info('  %s%s: % 11.3f', prefix, ix.names, params[[ix.names]])
+    }
+  } else if (is.vector(params[[ix.names]])) {
+    flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
+  } else {
+    flog.info('  %s%s: (i do not know how to display this)', prefix, ix.names)
+  }
+}
+```
 
 
 
@@ -927,8 +990,11 @@ hall$heatmap + ggtitle('') + theme(legend.position = 'bottom')
 
 
 
-
-
+```{r, eval=FALSE, include=FALSE}
+rmarkdown::render('Analysis.Rmd', output_file = 'brca7.html', params = list(alpha = .7))
+rmarkdown::render('Analysis.Rmd', output_file = 'brca3.html', params = list(alpha = .3))
+rmarkdown::render('Analysis.Rmd', output_file = 'brca5.html', params = list(alpha = .5))
+```
 
 
 ```{r, eval=FALSE, include=FALSE}

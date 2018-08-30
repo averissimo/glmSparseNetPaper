@@ -14,27 +14,25 @@ my.cv.glmnet <- function(alpha,
                          xdata,
                          ydata,
                          penalty.factor,
-                         nlambda           = 100,
+                         nlambda           = 1000,
                          nfolds            = 10,
                          lambda.min.ratio  = .001,
-                         n.cores           = 1,
-                         seed              = 1985) {
+                         seed              = 1985,
+                         ...) {
   #
   set.seed(seed)
   foldid <- loose.rock::balanced.cv.folds(ydata$status, nfolds = nfolds)$output
   #
-  new.model <- glmSparseNet::cv.glmSparseNet(xdata, Surv(ydata$time, ydata$status * 1),
-                                             family           ='cox',
-                                             network          = penalty.factor,
-                                             network.options  = glmSparseNet::network.options.default(min.degree = .2),
-                                             #
-                                             alpha            = alpha,
-                                             foldid           = foldid,
-                                             nlambda          = nlambda,
-                                             lambda.min.ratio = lambda.min.ratio,
-                                             standardize      = F,
-                                             #
-                                             mc.cores         = n.cores)
+  new.model <- glmnet.mclapply::cv.glmnet(xdata, Surv(ydata$time, ydata$status * 1),
+                         family           ='cox',
+                         penalty.factor   = penalty.factor,
+                         #
+                         alpha            = alpha,
+                         foldid           = foldid,
+                         nlambda          = nlambda,
+                         lambda.min.ratio = lambda.min.ratio,
+                         standardize      = FALSE,
+                         ...)
   #
   new.coef          <- glmnet::coef.cv.glmnet(new.model, s = 'lambda.min')[,1]
   new.target.lambda <- new.model$lambda.min

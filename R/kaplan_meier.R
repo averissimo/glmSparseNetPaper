@@ -31,7 +31,7 @@ km.name <- function(title, alpha, is.network = NULL) {
     ''
   } else {
     #is.network <- sub('\\..*', '', is.network)
-    is.network <- gsub('\\.((classic\\.cv)|(degree\\.cv)|(orphan\\.cv))\\.[0-9]+$', '', is.network)
+    is.network <- gsub('\\..*$', '', is.network)
     type <- if (is.network == 'glmnet') {
       subtitle <- 'Classic Elastic Net model'
       ''

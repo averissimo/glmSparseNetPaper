@@ -27,19 +27,29 @@ params:
   #
   degree.type: "string" # covariance, correlation, correlation.inv, oldie, sparsebn, string
   #
+  normalize: 'center' # max, center, none
+  log2: !r TRUE
+  #
   handle.duplicates: 'keep_first' # keep_all , keep_first
   #
   # glmnet parameter
-  alpha: !r seq(0, 1, .1)
+  alpha: !r seq(.1, 1, .1)
   # subset of variables to be used (Inf for all)
   subset: !r Inf
   #
   seed: !r 1985
-  seed.additional: !r 4
+  seed.additional: !r 2
   n.cores: !r 10
   #
   calc.params.old: !r FALSE
 ---
+
+```{r, include=FALSE, eval=FALSE}
+#rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
+rmarkdown::render('Analysis.Rmd', output_file = 'brca-max.html', params = list(normalization = 'max'), output_format = BiocStyle::html_document())
+rmarkdown::render('OptimalVariableSize.Rmd')
+```
+
 
 ## Libraries
 
@@ -61,10 +71,11 @@ library(survival.owl)
 library(biclust)
 #
 library(glmSparseNet)
-```
 
-```{r, include=FALSE}
-devtools::install_github('averissimo/glmnet')
+require(doMC)
+registerDoMC(cores=params$n.cores)
+
+#devtools::install_github('averissimo/glmnet')
 #
 devtools::load_all()
 #
@@ -75,66 +86,24 @@ devtools::load_all()
 theme_set(theme_minimal())
 ```
 
-## Parameters
-
-```{r parms, echo=FALSE}
-max.chars <- max(sapply(names(params), nchar))
-for (ix.names in sort(names(params))) {
-  prefix <- paste(array(' ', max.chars - nchar(ix.names)), collapse = '')
-  if (is.vector(params[[ix.names]]) && length(params[[ix.names]]) == 1) {
-    if (is.list(params[[ix.names]])) {
-      flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
-    }
-    else if (is.character(params[[ix.names]])) {
-      flog.info('  %s%s: %s', prefix, ix.names, params[[ix.names]])
-    }  else if (is.infinite(params[[ix.names]])) {
-      flog.info('  %s%s: %f', prefix, ix.names, params[[ix.names]])
-    } else if (is.integer(params[[ix.names]])) {
-      flog.info('  %s%s: % 11d', prefix, ix.names, params[[ix.names]])
-    } else {
-      flog.info('  %s%s: % 11.3f', prefix, ix.names, params[[ix.names]])
-    }
-  } else if (is.vector(params[[ix.names]])) {
-    flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
-  } else {
-    flog.info('  %s%s: (i do not know how to display this)', prefix, ix.names)
-  }
-}
-```
-
 # Load and normalize data
 
 ## Load TCGA data
 
-```{r, eval=FALSE}
-# xdata     - matrix with FPKM gene level expression
-# ydata     - survival data
-# xdata.raw - original matrix with possible multiple tissue samples from same indiviudal
-prepare.tcga.survival.data(params$project, 
-                           params$tissue, 
-                           #
-                           handle.duplicates            = params$handle.duplicates, 
-                           center                       = TRUE,
-                           log2.normalize               = TRUE,
-                           include.negative.survival    = FALSE,
-                           input.type                   = 'rna',
-                           coding.genes = params$coding.genes)
-```
-
-
 ```{r load.data, include=FALSE}
-my.data <- run.cache(prepare.tcga.survival.data, 
+my.data <- run.cache(prepare.tcga.survival.data.old, 
                      params$project, 
                      params$tissue, 
                      #
-                     handle.duplicates            = params$handle.duplicates, 
-                     center                       = TRUE,
-                     log2.normalize               = TRUE,
-                     include.negative.survival    = FALSE,
-                     input.type                   = 'rna',
+                     #input.type                = 'rna',
+                     normalization             = params$normalize,
+                     log2.pre.normalize        = params$log2,
+                     #include.negative.survival = FALSE,
                      #
-                     cache.prefix = 'tcga-data',
-                     coding.genes = params$coding.genes)
+                     handle.duplicates         = params$handle.duplicates, 
+                     coding.genes              = params$coding.genes,
+                     cache.prefix              = 'tcga-data',
+                     show.message = T)
 #
 clinical <- my.data$clinical
 #
@@ -200,6 +169,12 @@ if (params$degree.type == 'oldie') {
   degree <- colnames(xdata.raw)[!colnames(xdata.raw) %in% names(degree)] %>% {
    c(degree, array(0, length(.), dimnames = list(.))) 
   } %>% { .[colnames(xdata.raw)] }
+} else if (params$degree.type == 'string.pedro') {
+  #
+  # Load degree of STRING network downloaded from external sources
+  load('/ssd_home/averissimo/work/rpackages/network.cox-big.files/saves/degree-string.RData')
+  ix.names <- colnames(xdata) %in% names(degree_uw)
+  degree <- degree_uw[colnames(xdata)]
 }
 ```
 
@@ -216,7 +191,7 @@ see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
 
 ```{r transformation_function}
 # see ?glmSparseNet::heuristic.scale
-trans.fun <- function(x) { heuristic.scale(x) }
+trans.fun <- function(x) { heuristic.scale(x) + 0.2}
 ```
 
 
@@ -270,18 +245,19 @@ alpha.models <- tibble(alpha = numeric(), seed = numeric(), glmnet = list(), hub
 for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
   flog.info('Starting run with seed %d', ix.seed)
   for (ix.alpha in params$alpha) {
-    aux.call <- function(xdata, ydata, network, alpha, seed) { my.cv.glmnet(alpha, xdata, ydata, network, n.cores = params$n.cores, seed = seed) }
+    #aux.call <- function(xdata, ydata, network, alpha, seed) { my.cv.glmnet(alpha, xdata, ydata, network, parallel = TRUE, seed = seed) }
+    aux.call <- function(xdata, ydata, network, alpha, seed) { my.cv.glmnet(alpha, xdata, ydata, network, parallel = params$n.cores, seed = seed) }
     
     cv.classic <- run.cache(aux.call, xdata, ydata, rep(1, ncol(xdata)), ix.alpha, ix.seed, 
-                            cache.prefix = 'cv.glmSparseNet.elastic.net', cache.digest = list(xdata.digest.cache))
+                            cache.prefix = 'cv.glmSparseNet.elastic.net.glmnet', cache.digest = list(xdata.digest.cache))
     flog.info('    - Finished elastic net (%d)', sum(cv.classic$coef != 0))
-    
+
     cv.hub     <- run.cache(aux.call, xdata, ydata, penalty.factor.degree.new, ix.alpha, ix.seed, 
-                            cache.prefix = 'cv.glmSparseNet.hub', cache.digest = list(xdata.digest.cache))
+                            cache.prefix = 'cv.glmSparseNet.hub.glmnet', cache.digest = list(xdata.digest.cache))
     flog.info('    - Finished hub (%d)', sum(cv.hub$coef != 0))
     
     cv.orphan  <- run.cache(aux.call, xdata, ydata, penalty.factor.orphan, ix.alpha, ix.seed, 
-                            cache.prefix = 'cv.glmSparseNet.orphan', cache.digest = list(xdata.digest.cache))
+                            cache.prefix = 'cv.glmSparseNet.orphan.glmnet', cache.digest = list(xdata.digest.cache))
     flog.info('    - Finished orphan (%d)', sum(cv.orphan$coef != 0))
     
     new.line <- tibble(alpha  = ix.alpha, 
@@ -292,11 +268,30 @@ for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
     
     alpha.models <- rbind(alpha.models, new.line)
     
-    save(new.line, file = sprintf('cv.value_%s_xdata-%s_ydata-%s', loose.rock::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
+    save(new.line, file = sprintf('cv.value_%s_xdata-%s_ydata-%s', glmSparseNet::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
     
     flog.info('  * Finished run with alpha %.3f', ix.alpha)
   }
 }
+```
+
+## Selected variables
+
+```{r}
+sel.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
+  if (is.numeric(ix.name[[1]])) {
+    return(ix.name[[1]])
+  } else {
+    best.coef <- coef(ix.name[[1]], s = 'lambda.min')[,1]
+    return(names(best.coef[best.coef != 0]))
+  }
+}) %>% as.data.frame %>% as.tbl
+
+sel.all$alpha <- as.numeric(sel.all$alpha)
+
+sel.all %>% as.data.frame %>% group_by(alpha) %>% summarise_all(funs(mean = mean(sapply(., length)),
+                                                                      sd = sd(sapply(., length)),
+                                                                      unique = length(unique(unlist(.))))) %>% knitr::kable()
 ```
 
 ## Kaplan-Meier Results per `alpha` parameter
@@ -306,16 +301,23 @@ Individuals are separated by the coefficients estimated by the model in two grou
 ### Summary table for each model type *(mean is used)*
 
 ```{r, echo=FALSE}
-km.all <- apply(alpha.models, 1:2, function(ix.name) {
+km.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
   if (is.numeric(ix.name[[1]])) {
     return(ix.name[[1]])
   } else {
     best.coef <- coef(ix.name[[1]], s = 'lambda.min')[,1]
+    if (sum(best.coef[best.coef != 0]) == 0) {
+      return(NA)
+    }
     return(draw.kaplan(best.coef, xdata, ydata)$pvalue)
   }
 })
 
-km.all %>% as.data.frame %>%  group_by(alpha) %>% summarise_all(list(mean = mean, SE = sd)) %>% knitr::kable()
+km.all %>% as.data.frame %>%
+  group_by(alpha) %>% 
+  summarise_all(funs(mean = mean(., na.rm = TRUE), 
+                     SE = sd(., na.rm = TRUE))) %>% 
+  knitr::kable()
 ```
 
 ### Kaplan-Meier estimator plot
@@ -327,7 +329,7 @@ km.all %>% as.data.frame %>%
   ggplot(aes(x = Alpha, y = value, color = Model)) + 
   geom_boxplot(alpha = .5) + 
   # geom_jitter(width = 0.2, size = .5) +
-  expand_limits(y = .005) +
+  #expand_limits(y = .001) +
   ggtitle('Kaplan-Meier estimator (per alpha parameter)', 
           subtitle = 'Two groups (High/Low risk of event) are estimated based on Cox model\'s coefficients')
 ```
@@ -340,16 +342,22 @@ Concordance C-Index calculates a value between 0 and 1 that represents the pairw
 ### Summary of results
 
 ```{r, echo=FALSE}
-c.index.all <- apply(alpha.models, 1:2, function(ix.name) {
+c.index.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
   if (is.numeric(ix.name[[1]])) {
     return(ix.name[[1]])
   } else {
     best.coef <- coef(ix.name[[1]], s = 'lambda.min')[,1]
+    if (sum(best.coef[best.coef != 0]) == 0) {
+      return(NA)
+    }
     return(fit.risk(best.coef, xdata, ydata, NULL))
   }
 })
 
-c.index.all %>% as.data.frame %>%  group_by(alpha) %>% summarise_all(mean) %>% knitr::kable()
+c.index.all %>% as.data.frame %>%  group_by(alpha) %>% 
+  summarise_all(funs(mean = mean(., na.rm = TRUE), 
+                     SE   = sd(., na.rm = TRUE))) %>% 
+  knitr::kable()
 ```
 
 ### C-Index plot
@@ -365,3 +373,30 @@ c.index.all  %>% as.data.frame %>%
 ```
 
 
+
+## Parameters
+
+```{r parms, echo=FALSE}
+max.chars <- max(sapply(names(params), nchar))
+for (ix.names in sort(names(params))) {
+  prefix <- paste(array(' ', max.chars - nchar(ix.names)), collapse = '')
+  if (is.vector(params[[ix.names]]) && length(params[[ix.names]]) == 1) {
+    if (is.list(params[[ix.names]])) {
+      flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
+    }
+    else if (is.character(params[[ix.names]])) {
+      flog.info('  %s%s: %s', prefix, ix.names, params[[ix.names]])
+    }  else if (is.infinite(params[[ix.names]])) {
+      flog.info('  %s%s: %f', prefix, ix.names, params[[ix.names]])
+    } else if (is.integer(params[[ix.names]])) {
+      flog.info('  %s%s: % 11d', prefix, ix.names, params[[ix.names]])
+    } else {
+      flog.info('  %s%s: % 11.3f', prefix, ix.names, params[[ix.names]])
+    }
+  } else if (is.vector(params[[ix.names]])) {
+    flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
+  } else {
+    flog.info('  %s%s: (i do not know how to display this)', prefix, ix.names)
+  }
+}
+```
