@@ -97,6 +97,6 @@ glmSparseNet.cox_ <- function(xdata,
   }
   new.target.lambda <- new.model$lambda[var.ix[sort(var.ix, decreasing = T, index.return = T)$ix[1]]]
   new.coef          <- as.vector(coef(new.model, s = new.target.lambda))
-  names(new.coef)   <- colnames(xdata[,xdata.ix])
+  names(new.coef)   <- colnames(xdata)
   return(list(model = new.model, lambda = new.target.lambda, coef = new.coef))
 }

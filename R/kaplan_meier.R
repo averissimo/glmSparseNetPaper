@@ -39,7 +39,7 @@ km.name <- function(title, alpha, is.network = NULL) {
       subtitle <- 'DegreeCox: Hubs are promoted -- log'
       'Promotes high degree with '
     } else if (is.network == 'degree_new') {
-      subtitle <- 'DegreeCox: Hubs are promoted -- heuristic'
+      subtitle <- 'HubCox: Hubs are promoted'
       'Promotes high degree with '
     } else if (is.network == 'degree_old') {
       subtitle <- 'DegreeCox: Hubs are promoted -- old'

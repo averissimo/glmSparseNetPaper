@@ -10,9 +10,11 @@ output:
     self_contained: true
     number_sections: true
     fig_width: 10
+    dev: svg
   BiocStyle::html_document:
     number_sections: yes
     toc: true
+    dev: svg
 vignette: >
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
@@ -38,22 +40,22 @@ params:
   subset: !r Inf
   #
   seed: !r 1985
-  seed.additional: !r 2
+  seed.additional: !r 1
   n.cores: !r 10
   #
   calc.params.old: !r FALSE
 ---
 
 ```{r, include=FALSE, eval=FALSE}
-#rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
+rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
+rmarkdown::render('OptimalVariableSize.Rmd', output_format = BiocStyle::html_document())
 rmarkdown::render('Analysis.Rmd', output_file = 'brca-max.html', params = list(normalization = 'max'), output_format = BiocStyle::html_document())
-rmarkdown::render('OptimalVariableSize.Rmd')
 ```
 
 
-## Libraries
+# Libraries
 
-```{r, messages=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE}
 library(futile.logger)
 library(parallel)
 library(glmnet)
@@ -268,7 +270,7 @@ for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
     
     alpha.models <- rbind(alpha.models, new.line)
     
-    save(new.line, file = sprintf('cv.value_%s_xdata-%s_ydata-%s', glmSparseNet::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
+    save(new.line, file = sprintf('cv.value/cv.value_%s_xdata-%s_ydata-%s', glmSparseNet::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
     
     flog.info('  * Finished run with alpha %.3f', ix.alpha)
   }
@@ -277,7 +279,7 @@ for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
 
 ## Selected variables
 
-```{r}
+```{r, echo=FALSE}
 sel.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
   if (is.numeric(ix.name[[1]])) {
     return(ix.name[[1]])
@@ -377,26 +379,5 @@ c.index.all  %>% as.data.frame %>%
 ## Parameters
 
 ```{r parms, echo=FALSE}
-max.chars <- max(sapply(names(params), nchar))
-for (ix.names in sort(names(params))) {
-  prefix <- paste(array(' ', max.chars - nchar(ix.names)), collapse = '')
-  if (is.vector(params[[ix.names]]) && length(params[[ix.names]]) == 1) {
-    if (is.list(params[[ix.names]])) {
-      flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
-    }
-    else if (is.character(params[[ix.names]])) {
-      flog.info('  %s%s: %s', prefix, ix.names, params[[ix.names]])
-    }  else if (is.infinite(params[[ix.names]])) {
-      flog.info('  %s%s: %f', prefix, ix.names, params[[ix.names]])
-    } else if (is.integer(params[[ix.names]])) {
-      flog.info('  %s%s: % 11d', prefix, ix.names, params[[ix.names]])
-    } else {
-      flog.info('  %s%s: % 11.3f', prefix, ix.names, params[[ix.names]])
-    }
-  } else if (is.vector(params[[ix.names]])) {
-    flog.info('  %s%s: %s', prefix, ix.names, paste(params[[ix.names]], collapse = ', '))
-  } else {
-    flog.info('  %s%s: (i do not know how to display this)', prefix, ix.names)
-  }
-}
+show.params(params)
 ```

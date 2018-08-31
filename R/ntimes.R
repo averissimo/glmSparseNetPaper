@@ -1,32 +1,31 @@
 # train.perc <- params$train
 # subset <- params$subset
 # seed <- 1985
-call.results <- function(seed,
-                         xdata,
+call.results <- function(xdata,
                          ydata,
-                         train.perc,
-                         subset,
                          penalty.factor.degree.new,
                          penalty.factor.degree.old,
                          penalty.factor.orphan,
-                         params) {
+                         params,
+                         no.plots = FALSE) {
   #flog.info('seed: %d', seed)
-  set.seed(seed)
+  set.seed(params$seed)
 
   #
   # Build training data
-  ixs <- glmSparseNet::balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = train.perc)
-  #flog.info('ixs:', ixs, capture = T)
+  ixs <- glmSparseNet::balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = params$train)
+
   xdata.test <- xdata[ixs$test,]
   ydata.test <- ydata[ixs$test,]
   #
   xdata.train <- xdata[ixs$train,]
   ydata.train <- ydata[ixs$train,]
 
-  xdata.ix <- seq(ncol(xdata))
+  xdata.ix          <- seq(ncol(xdata))
   xdata.ix.no.added <- xdata.ix
 
-  if (subset < ncol(xdata.train)) {
+  if (params$subset < ncol(xdata.train)) {
+    set.seed(params$seed)
     xdata.ix <- sample(xdata.ix, params$subset)
   }
 
@@ -36,14 +35,11 @@ call.results <- function(seed,
   # MODELS
   #
 
-  models  <- list()
-  lambdas <- list()
-  coefs   <- list()
-  result  <- list()
+  models <- lambdas <- coefs <- result <- table.data <- list()
 
   glmnet.params <- list()
 
-  for (target.name in names(params$target.vars)) {
+  for(target.name in names(params$target.vars)) {
     target <- params$target.vars[[target.name]]
     glmnet.params <- c(glmnet.params, list(list(penalty = rep(1, ncol(xdata.train)),
                                                 name = 'glmnet',
@@ -69,6 +65,10 @@ call.results <- function(seed,
     }
   }
 
+  if (!exists('global.n.cores')) {
+    global.n.cores <- 1
+  }
+
   outer.result <- mclapply(seq_along(glmnet.params), function(ix) {
     el       <- glmnet.params[[ix]]
     ix.name  <- sprintf('%s.%s.%d', el$name, el$target.name, el$target)
@@ -88,7 +88,7 @@ call.results <- function(seed,
     return(list(result = result, name = ix.name))
     #})
 
-  }, mc.cores = 1, mc.allow.recursive = FALSE)
+  }, mc.cores = min(global.n.cores, length(glmnet.params)), mc.allow.recursive = FALSE)
 
 
   for (ix in outer.result) {
@@ -110,17 +110,28 @@ call.results <- function(seed,
   c.index.test  <- list()
 
   for (ix.name in names(coefs)) {
-    km.train[[ix.name]] <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), plot.title = 'Train set', xdata.train[, xdata.ix], ydata.train)$pvalue
-    km.test[[ix.name]]  <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), plot.title = 'Test set', xdata.test[, xdata.ix], ydata.test)$pvalue
+    km.train[[ix.name]] <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), plot.title = 'Train set', xdata.train[, xdata.ix], ydata.train)
+    km.test[[ix.name]]  <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), plot.title = 'Test set', xdata.test[, xdata.ix], ydata.test)
     #
-    c.index.train[[ix.name]] <- fit.risk(coefs[[ix.name]], xdata.train[, xdata.ix], ydata.train, ix.name, n.cores = 1, show.message = FALSE)
-    c.index.test[[ix.name]]  <- fit.risk(coefs[[ix.name]], xdata.test[, xdata.ix], ydata.test, ix.name, n.cores = 1, show.message = FALSE)
+    c.index.train[[ix.name]] <- fit.risk(coefs[[ix.name]], xdata.train[, xdata.ix], ydata.train, ix.name, n.cores = global.n.cores, show.message = FALSE)
+    c.index.test[[ix.name]]  <- fit.risk(coefs[[ix.name]], xdata.test[, xdata.ix], ydata.test, ix.name, n.cores = global.n.cores, show.message = FALSE)
+  }
+
+  if (no.plots) {
+    for (ix in names(coefs)) {
+      km.train[[ix]] <- km.train[[ix]]$pvalue
+      km.test[[ix]]  <- km.test[[ix]]$pvalue
+    }
   }
 
   return(list(metrics = list(km.train      = km.train,
                              km.test       = km.test,
                              c.index.train = c.index.train,
                              c.index.test  = c.index.test),
-              coefs = coefs,
-              ixs   = ixs))
+              result  = result,
+              coefs   = coefs,
+              models  = models,
+              lambdas = lambdas,
+              ixs     = ixs,
+              xdata.ix = xdata.ix))
 }
