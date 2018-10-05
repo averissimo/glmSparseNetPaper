@@ -5,9 +5,10 @@
 \title{Prepare FPKM data from TCGA project (specific tissue)}
 \usage{
 prepare.tcga.survival.data(project = "brca",
-  tissue.type = "primary.solid.tumor", input.type = "rna", center = TRUE,
-  log2.normalize = TRUE, include.negative.survival = TRUE,
-  handle.duplicates = "keep_first", coding.genes = FALSE)
+  tissue.type = "primary.solid.tumor", input.type = "rna",
+  normalization = "none", log2.pre.normalize = FALSE,
+  include.negative.survival = FALSE, handle.duplicates = "keep_first",
+  only.coding.genes = FALSE)
 }
 \arguments{
 \item{project}{tcga project that has a package avaliable see https://github.com/averissimo/tcga.data}
@@ -16,11 +17,11 @@ prepare.tcga.survival.data(project = "brca",
 
 \item{input.type}{either 'rna' for RNASeq or 'dna' for mutation data}
 
-\item{center}{scale xdata by subtracting by mean and dividing by standard deviation}
-
 \item{include.negative.survival}{shift the survival times to include negative survival}
 
 \item{handle.duplicates}{strategy to handle multiple samples for same individual, can take 'keep_first' or 'keep_all'}
+
+\item{center}{scale xdata by subtracting by mean and dividing by standard deviation}
 
 \item{coding.genes}{filter the genes to only include coding genes, see loose.rock::coding.genes}
 }
@@ -43,11 +44,12 @@ It will:
  * remove genes from RNASeqData (xdata) with standard deviation == 0
 }
 \examples{
-# # Install a data package to load cancer data
-# source("https://bioconductor.org/biocLite.R")
-# biocLite(paste0('https://github.com/averissimo/tcga.data/releases/download/',
-#                 '2016.12.15-brca/brca.data_1.0.tar.gz'))
-# # Run
-# prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first')
-# prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first', input.type = 'dna')
+\dontrun{
+    # Install a data package to load cancer data
+    source("https://bioconductor.org/biocLite.R")
+    biocLite(paste0('https://github.com/averissimo/tcga.data/releases/download/',
+                    '2016.12.15-brca/brca.data_1.0.tar.gz'))
+    prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first')
+    prepare.tcga.survival.data('brca', 'primary.solid.tumor', 'keep_first', input.type = 'dna')
+}
 }

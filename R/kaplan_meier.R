@@ -30,21 +30,20 @@ km.name <- function(title, alpha, is.network = NULL) {
     subtitle <- 'Classic Elastic Net model'
     ''
   } else {
-    #is.network <- sub('\\..*', '', is.network)
-    is.network <- gsub('\\..*$', '', is.network)
-    type <- if (is.network == 'glmnet') {
+    is.network <- prettify.labels(is.network, 'model')
+    type <- if (is.network == 'Elastic Net') {
       subtitle <- 'Classic Elastic Net model'
       ''
-    } else if (is.network == 'degree_log') {
+    } else if (is.network == 'Degree_log') {
       subtitle <- 'DegreeCox: Hubs are promoted -- log'
       'Promotes high degree with '
-    } else if (is.network == 'degree_new') {
+    } else if (is.network == 'Hub') {
       subtitle <- 'HubCox: Hubs are promoted'
       'Promotes high degree with '
-    } else if (is.network == 'degree_old') {
+    } else if (is.network == 'Degree_old') {
       subtitle <- 'DegreeCox: Hubs are promoted -- old'
       'Promotes high degree with '
-    } else if (is.network == 'orphan') {
+    } else if (is.network == 'Orphan') {
       subtitle <- 'OrphanCox: Low connected nodes are promoted'
       'Promotes low degree with '
     }
@@ -63,7 +62,7 @@ km.name <- function(title, alpha, is.network = NULL) {
 #'
 #' @return
 #' @export
-my.draw.kaplan <- function(coef.l, plot.title, xdata, ydata) {
-  return(glmSparseNet::draw.kaplan(coef.l, xdata, ydata,
+my.draw.kaplan <- function(coef.l, xdata, ydata, plot.title = '', no.plot = FALSE) {
+  return(glmSparseNet::separate2GroupsCox(coef.l, xdata, ydata, no.plot = no.plot,
                      plot.title = plot.title, legend.outside = F, ylim = c(0,1)))
 }

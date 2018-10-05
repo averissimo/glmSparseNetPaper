@@ -7,13 +7,14 @@ call.results <- function(xdata,
                          penalty.factor.degree.old,
                          penalty.factor.orphan,
                          params,
+                         no.models = FALSE,
                          no.plots = FALSE) {
   #flog.info('seed: %d', seed)
   set.seed(params$seed)
 
   #
   # Build training data
-  ixs <- glmSparseNet::balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = params$train)
+  ixs <- loose.rock::balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = params$train)
 
   xdata.test <- xdata[ixs$test,]
   ydata.test <- ydata[ixs$test,]
@@ -29,7 +30,7 @@ call.results <- function(xdata,
     xdata.ix <- sample(xdata.ix, params$subset)
   }
 
-  xdata.train.digest <- glmSparseNet::digest.cache(xdata.train[, xdata.ix])
+  xdata.train.digest <- loose.rock::digest.cache(xdata.train[, xdata.ix])
 
   #
   # MODELS
@@ -40,27 +41,34 @@ call.results <- function(xdata,
   glmnet.params <- list()
 
   for(target.name in names(params$target.vars)) {
-    target <- params$target.vars[[target.name]]
+    target  <- params$target.vars[[target.name]]$vars
+    alpha.t <- params$target.vars[[target.name]]$alpha
+
     glmnet.params <- c(glmnet.params, list(list(penalty = rep(1, ncol(xdata.train)),
-                                                name = 'glmnet',
-                                                target = target,
+                                                name    = 'glmnet',
+                                                alpha   = alpha.t,
+                                                target  = target,
                                                 target.name = target.name)))
     glmnet.params <- c(glmnet.params, list(list(penalty = penalty.factor.degree.new,
-                                                name = 'degree_new',
-                                                target = target,
+                                                name    = 'degree_new',
+                                                alpha   = alpha.t,
+                                                target  = target,
                                                 target.name = target.name)))
     glmnet.params <- c(glmnet.params, list(list(penalty = penalty.factor.orphan,
-                                                name = 'orphan',
-                                                target = target,
+                                                name    = 'orphan',
+                                                alpha   = alpha.t,
+                                                target  = target,
                                                 target.name = target.name)))
     if (params$calc.params.old) {
       glmnet.params <- c(glmnet.params, list(list(penalty = penalty.factor.degree.old,
-                                                  name = 'degree_old',
-                                                  target = target,
+                                                  name    = 'degree_old',
+                                                  alpha   = alpha.t,
+                                                  target  = target,
                                                   target.name = target.name)))
       glmnet.params <- c(glmnet.params, list(list(penalty = penalty.factor.degree.log,
-                                                  name = 'degree_log',
-                                                  target = target,
+                                                  name    = 'degree_log',
+                                                  alpha   = alpha.t,
+                                                  target  = target,
                                                   target.name = target.name)))
     }
   }
@@ -71,14 +79,14 @@ call.results <- function(xdata,
 
   outer.result <- mclapply(seq_along(glmnet.params), function(ix) {
     el       <- glmnet.params[[ix]]
-    ix.name  <- sprintf('%s.%s.%d', el$name, el$target.name, el$target)
+    ix.name  <- sprintf('%s--%s--%.2f--%d', el$name, el$target.name, el$alpha, el$target)
     ix.cache <- sprintf('%s_models', el$name)
     #
     suppressWarnings(
       result  <- glmSparseNet.cox(xdata        = xdata.train[,xdata.ix],
                                   ydata        = ydata.train,
                                   target.vars  = el$target,
-                                  alpha        = params$alpha,
+                                  alpha        = el$alpha,
                                   network      = el$penalty,
                                   xdata.digest = xdata.train.digest,
                                   cache.prefix = ix.cache)
@@ -93,9 +101,11 @@ call.results <- function(xdata,
 
   for (ix in outer.result) {
     result[[ix$name]]  <- ix$result
-    models[[ix$name]]  <- ix$result$model
     lambdas[[ix$name]] <- ix$result$lambda
     coefs[[ix$name]]   <- ix$result$coef
+    #
+    ix$result$lambda <- NULL
+    ix$result$coef   <- NULL
   }
 
   #
@@ -110,8 +120,8 @@ call.results <- function(xdata,
   c.index.test  <- list()
 
   for (ix.name in names(coefs)) {
-    km.train[[ix.name]] <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), plot.title = 'Train set', xdata.train[, xdata.ix], ydata.train)
-    km.test[[ix.name]]  <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), plot.title = 'Test set', xdata.test[, xdata.ix], ydata.test)
+    km.train[[ix.name]] <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), xdata.train[, xdata.ix], ydata.train, no.plot = TRUE)
+    km.test[[ix.name]]  <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), xdata.test[, xdata.ix], ydata.test, no.plot = TRUE)
     #
     c.index.train[[ix.name]] <- fit.risk(coefs[[ix.name]], xdata.train[, xdata.ix], ydata.train, ix.name, n.cores = global.n.cores, show.message = FALSE)
     c.index.test[[ix.name]]  <- fit.risk(coefs[[ix.name]], xdata.test[, xdata.ix], ydata.test, ix.name, n.cores = global.n.cores, show.message = FALSE)
@@ -124,13 +134,17 @@ call.results <- function(xdata,
     }
   }
 
+  if (no.models) {
+    result <- NULL
+  }
+
   return(list(metrics = list(km.train      = km.train,
                              km.test       = km.test,
                              c.index.train = c.index.train,
                              c.index.test  = c.index.test),
+              varnames = colnames(xdata),
               result  = result,
               coefs   = coefs,
-              models  = models,
               lambdas = lambdas,
               ixs     = ixs,
               xdata.ix = xdata.ix))

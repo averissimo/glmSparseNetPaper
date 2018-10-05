@@ -4,8 +4,8 @@
 \alias{my.cv.glmnet}
 \title{Title}
 \usage{
-my.cv.glmnet(prefix, alpha, xdata, ydata, penalty.factor, xdata.digest = NULL,
-  nfolds = 10, lambda.min.ratio = 0.001, n.cores = 1, seed = 1985)
+my.cv.glmnet(alpha, xdata, ydata, penalty.factor, nlambda = 1000,
+  nfolds = 10, lambda.min.ratio = 0.001, seed = 1985, ...)
 }
 \arguments{
 \item{show.messages}{}

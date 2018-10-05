@@ -18,33 +18,49 @@ vignette: >
   %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
   %\VignetteEncoding{UTF-8}
 params:
-  project: 'brca' # skcm prad brca
-  tissue: 'primary.solid.tumor' # primary.solid.tumor metastatic solid.tissue.normal
+  
+  #
+  # Breast Invasive Carcinoma
+  # 
+  
+  project: 'brca.data.2018.09.13' 
+  tissue: 'primary.solid.tumor'
+  subtract.surv.column: !r NULL # brca
+  target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
+  
+  #
+  # Skin Melanoma
+  #
+  
+  #project: 'skcm.data.2018.09.11'
+  #tissue: 'metastatic'
+  #subtract.surv.column: 'days_to_submitted_specimen_dx' # metastatic
+  #target.vars: !r list(glmnet = list(alpha = .1, vars = 116), hub = list(alpha = .1, vars = 41), orphan = list(alpha = .1, vars = 111))
+  #
+  
+  #
+  # Data
+  #
+  
   coding.genes: !r TRUE
+  log2: !r TRUE
+  normalization: 'center'         # possible values: center, max, none
+  handle.duplicates: 'keep_first' # possible values: keep_all , keep_first
+  #
+  degree.cutoff: !r 0
+  degree.type: "string"         # possible values: covariance, correlation, 
+                                #  correlation.inv, oldie, sparsebn, string
   degree.unweighted: !r TRUE
   degree.correlation: 'pearson'
-  degree.cutoff: !r 0
   #
-  # Normalization of xdata
-  log2: !r TRUE
-  normalization: 'center' # center, max, none
   #
-  degree.type: "string" # covariance, correlation, correlation.inv, oldie, sparsebn, string
-  #
-  handle.duplicates: 'keep_first' # keep_all , keep_first
-  #
-  # glmnet parameter
-  alpha: !r .2
   # subset of variables to be used (Inf for all)
-  subset: !r Inf
-  train: !r .8
-  # number of times that training set is tested
-  ntimes: !r 14
-  # target variables that models should output
-  target.vars: !r list(glmnet = 83, hub = 39, orphan = 101)
+  subset: !r Inf  # Random subset of variables to use, Inf for no subsetting
+  train: !r .8    # train percentage
+  ntimes: !r 1000 # number of times that training set is tested
   #
   seed: !r 1985
-  n.cores: !r 14
+  n.cores: !r 10
   #
   calc.params.old: !r FALSE
 ---
@@ -65,9 +81,8 @@ params:
 
 **Model options**
 
-* *Alpha in ElasticNet*: **`r params$alpha`**
 * *Train/Test*: **`r params$train * 100`%**
-* *Target variables*: `r paste(sapply(names(params$target.vars), function(ix) {sprintf('%s: %d', ix, params$target.vars[[ix]])}), collapse = ', ')`
+* *Alpha / Target variables*: `r paste(sapply(names(params$target.vars), function(ix) {sprintf('%s: %.2f / %d', ix, params$target.vars[[ix]]$alpha, params$target.vars[[ix]]$vars)}), collapse = ', ')`
   
 **Network processing**
 
@@ -82,6 +97,11 @@ cor/cov method: `r params$degree.correlation`
 ```{r, include=FALSE, eval=FALSE}
 rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
 rmarkdown::render('Analysis.Rmd', output_file = 'brca-max.html', params = list(normalization = 'max'), output_format = BiocStyle::html_document())
+
+rmarkdown::render('Analysis.Rmd', output_file = 'skcm-center.html', 
+                  params = list(normalization = 'center', project = 'skcm', tissue = 'metastatic'), output_format = BiocStyle::html_document())
+rmarkdown::render('Analysis.Rmd', output_file = 'skcm-max.html', 
+                  params = list(normalization = 'max', project = 'skcm', tissue = 'metastatic'), output_format = BiocStyle::html_document())
 ```
 
 
@@ -97,12 +117,12 @@ knitr::opts_chunk$set(echo = TRUE, collapse = TRUE, tidy = TRUE)
 library(futile.logger)
 library(parallel)
 library(glmnet)
+library(survminer)
 library(loose.rock)
 library(digest)
 library(ggplot2)
 library(reshape2)
 library(survival)
-library(brca.data)
 library(Vennerable)
 library(limma)
 library(tidyverse)
@@ -135,6 +155,7 @@ theme_set(theme_minimal())
 * *Tissue type*: **`r params$tissue`**
     * `r if(params$coding.genes) {'Only using coding genes'} else {'Using all genes (coding and non-coding)'}`
 * *Degree calculation*: **`r params$degree.type`**
+* *Subtract surivival time*: **`r params$subtract.surv.column`**
 
 **Normalization**
 
@@ -143,20 +164,20 @@ theme_set(theme_minimal())
 
 ## Load TCGA data
 
-```{r load.data}
-my.data <- run.cache(prepare.tcga.survival.data.old, 
-                     'brca', 
-                     'primary.solid.tumor', 
+```{r}
+my.data <- run.cache(prepare.tcga.survival.data, 
+                     params$project, 
+                     params$tissue, 
                      #
                      #input.type                = 'rna',
                      normalization             = params$normalization,
                      log2.pre.normalize        = params$log2,
-                     # include.negative.survival = FALSE,
+                     #
                      handle.duplicates         = 'keep_first', 
                      coding.genes              = TRUE,
-                     #
-                     cache.prefix              = 'tcga-data',
-                     show.message = TRUE)
+                     subtract.surv.column      = params$subtract.surv.column,
+                     cache.prefix              = 'tcga-data.new',
+                     show.message = T)
 #
 clinical <- my.data$clinical
 #
@@ -216,8 +237,9 @@ if (params$degree.type == 'oldie') {
 } else if (params$degree.type == 'string') {
   #
   # Load degree of STRING network downloaded from external sources
-  degree <- run.cache(string.db.homo.sapiens) %>% {
-    run.cache(build.string.network, ., use.names = 'ensembl')
+  degree <- run.cache(stringDBhomoSapiens, cache.prefix = "stringDB") %>% {
+    run.cache(buildStringNetwork, ., use.names = 'ensembl', 
+              cache.prefix = 'string-network')
     } %>% {
       .@x[.@x <= params$degree.cutoff] <- 0
       if (params$degree.unweighted) {
@@ -239,6 +261,8 @@ if (params$degree.type == 'oldie') {
   ix.names <- colnames(xdata) %in% names(degree_uw)
   degree <- degree_uw[colnames(xdata)]
 }
+rm(xdata.raw)
+.Last.value <- gc(reset = TRUE, verbose = FALSE)
 ```
 
 ## Summary of data
@@ -255,16 +279,21 @@ flog.info('             non-zero degree: %d', sum(degree != 0))
 
 ### Survival
 
-```{r surv_times, echo=FALSE}
-ydata.year        <- ydata %>% 
-  mutate(time = time / 365, status = factor(status)) %>%
-  mutate(status = fct_recode(status,
-                             'Alive (censored)' = 'FALSE',
-                             'Dead' = 'TRUE'))
+```{r}
+ggsurv <- survfit(Surv(time, status) ~ 1, data = ydata %>% mutate(time = time/365*12)) %>% 
+  ggsurvplot(data = ydata,
+             conf.int = FALSE,
+             risk.table = TRUE,
+             cumcensor = TRUE,
+             xlab = "Time in months",
+             surv.median.line = "hv",  # add the median survival pointer.
+             #ncensor.plot = TRUE,
+             ggtheme = theme_minimal())
 #
-ggplot(ydata.year) + geom_freqpoly(aes(time, color = status), bins = 150) +
-  theme_minimal() + xlab('Time (year)') + ggtitle('Distribution of time per event') +
-  theme(legend.position = 'top')
+ggsurv$plot <- ggsurv$plot + theme(legend.position = 'none')
+ggsurv$ncensor.plot <- ggpar(ggsurv$ncensor.plot, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv$table <- ggpar(ggsurv$table, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv
 ```
 
 ```{r test.clinical.variables, fig.height=15, echo=FALSE, eval=FALSE}
@@ -275,7 +304,7 @@ ggplot(ydata.year) + geom_freqpoly(aes(time, color = status), bins = 150) +
 # 1. Univariate cox model
 # 1. Log rank test when separating between high and low risk group
 
-all.plots <- run.cache(test.all.clinical, clinical, ydata)
+all.plots <- run.cache(test.all.clinical, clinical, ydata, cache.prefix = 'allplots')
 
 multiplot(plotlist = all.plots$plot.list, layout = all.plots$layout)
 knitr::kable(dplyr::arrange(dplyr::select(all.plots$df, name, p.value, desc), p.value))
@@ -288,11 +317,11 @@ knitr::kable(dplyr::arrange(dplyr::select(all.plots$df, name, p.value, desc), p.
 * Orphan: heuristic( degree )
 * `trans.fun` is a double power to scale the values
 
-see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
+see `?glmSparseNet::heuristicScale` or `?glmSparseNet::hubHeuristic`
 
 ```{r transformation_function}
 # see ?glmSparseNet::heuristic.scale
-trans.fun <- function(x) { heuristic.scale(x) + 0.2}
+trans.fun <- function(x) { heuristicScale(x) + 0.2}
 ```
 
 ```{r prepare.penalty, echo=FALSE}
@@ -417,7 +446,7 @@ ggplot(transf.d) +
 # Model Inference
 
 ```{r list_init, include=FALSE}
-calc.params <- params[c('alpha', 'subset', 'train', 'calc.params.old', 'seed', 'target.vars')]
+calc.params <- params[c('subset', 'train', 'calc.params.old', 'seed', 'target.vars')]
 model.results <- run.cache(call.results,
                            xdata,
                            ydata,
@@ -425,14 +454,18 @@ model.results <- run.cache(call.results,
                            penalty.factor.degree.old,
                            penalty.factor.orphan,
                            calc.params,
-                           cache.digest = list(xdata.digest.cache, ydata.digest.cache))
+                           no.plot = TRUE,
+                           no.models = TRUE,
+                           cache.digest = list(xdata.digest.cache, ydata.digest.cache),
+                           cache.prefix = 'big-diff')
 #
 xdata.ix      <- model.results$xdata.ix
-models        <- model.results$models
+varnames      <- model.results$varnames
+coefs         <- model.results$coefs
 result        <- model.results$result
 lambdas       <- model.results$lambdas
-km.train      <- model.results$metrics$km.train
-km.test       <- model.results$metrics$km.test
+km.train      <- model.results$metric$km.train
+km.test       <- model.results$metric$km.test
 c.index.train <- model.results$metrics$c.index.train
 c.index.test  <- model.results$metrics$c.index.test
 ```
@@ -460,7 +493,7 @@ flog.info('Size of sets: (size/events)\n * Train: %.2f%% :: %4d / %4d\n *  Test:
 flog.info('Number of variables per model:')
 lapply(model.results$coefs, function(ix){ sum(ix != 0) }) %>%
   melt() %>%
-  rename(nvars = value,
+  dplyr::rename(nvars = value,
          Model = L1) %>%
   mutate(Model = prettify.labels(Model)) %>%
   dplyr::select(Model, nvars) %>%
@@ -479,21 +512,25 @@ Calculated using the inferred models and the train/test datasets. *The higher th
 ```{r risk, fig.height=18, echo=FALSE, warning=FALSE}
 this.list <- list()
 for (ix.name in names(model.results$coefs)) {
-  this.list[[ix.name]] <- list(model = model.results$models[[ix.name]], target = lambdas[[ix.name]])
+  this.list[[ix.name]] <- list(model = model.results$coefs[[ix.name]], target = lambdas[[ix.name]])
 }
 
-fit.df <- run.cache(build.fit.df, this.list, xdata.ix) 
+fit.df <- run.cache(build.fit.df, this.list, xdata.train, xdata.test, xdata.ix, 
+                    cache.prefix = 'build.fit.df') 
 
 for(ix in c('Train', 'Test')) {
   print(
     fit.df %>%
-      mutate(type = prettify.labels(type)) %>%
+      mutate(type.str = prettify.labels(type)) %>%
+      mutate(type.model = prettify.labels(type, ret.value = 'model')) %>%
       filter(set == ix) %>%
       ggplot() +
-        geom_freqpoly(aes(relative.risk, color = set), bins = 150) + theme_minimal() +
+        #geom_freqpoly(aes(relative.risk, color = set), bins = 150) +
+        stat_density(aes(relative.risk, fill = type.model), adjust = 1/5) + 
+        theme_minimal() +
         geom_vline(aes(xintercept = mean), linetype = 'dotted', color = '#999999') +
         geom_text(aes(x = mean, y = -.5, label = sprintf(' Mean of relative risk %g', mean), hjust = 0), color = '#999999', inherit.aes = FALSE, check_overlap = TRUE) + 
-        facet_wrap( ~ type + set, ncol = 3) + 
+        facet_wrap( ~ type.str + set, ncol = 3) + 
         ggtitle('Distribution of risk in Classic model') +
         theme(legend.position = 'none') +
         xlim(0, 5)
@@ -508,16 +545,22 @@ my.km.train <- list()
 my.km.test <- list()
 ix <- 1
 for (ix.name in names(model.results$coefs)) {
-  my.km.train[[ix]] <- km.train[[ix.name]]$plot + km.name('Train', params$alpha, ix.name)
-  my.km.test[[ix]]  <- km.test[[ix.name]]$plot  + km.name('Test',  params$alpha, ix.name)
+  ix.alpha <- prettify.labels(ix.name, 'alpha') %>% as.double
+  
+  my.km.train[[ix]] <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), 
+                                      xdata.train[, xdata.ix],  ydata.train, 
+                                      plot.title = 'Train set')$plot + km.name('Train', ix.alpha, ix.name)
+  my.km.test[[ix]]  <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), 
+                                      xdata.test[, xdata.ix], ydata.test, 
+                                      plot.title = 'Test set')$plot + km.name('Test', ix.alpha, ix.name)
   ix <- ix + 1
 }
 
 multiplot(plotlist = my.km.test, ncol = 1, layout = matrix(seq_along(my.km.test), byrow = T))
 multiplot(plotlist = my.km.train, ncol = 1, layout = matrix(seq_along(my.km.train), byrow = T))
-```
+``` 
 
-## Summary
+## Summary Table
 
 ```{r summary, echo=FALSE}
 table.data <- data.frame()
@@ -529,11 +572,11 @@ for (ix.name in names(model.results$coefs)) {
                            tissue        = params$tissue,
                            cutoff        = params$degree.cutoff,
                            coding.genes  = params$coding.genes,
-                           alpha         = params$alpha,
-                           model         = ix.name,
+                           alpha         = prettify.labels(ix.name, 'alpha'),
+                           model         = prettify.labels(ix.name, 'model'),
                            nvars         = sum(model.results$coefs[[ix.name]] != 0),
-                           km.train      = km.train[[ix.name]]$pvalue,
-                           km.test       = km.test[[ix.name]]$pvalue,
+                           km.train      = km.train[[ix.name]],
+                           km.test       = km.test[[ix.name]],
                            c.index.train = c.index.train[[ix.name]],
                            c.index.test  = c.index.test[[ix.name]]))
 }
@@ -551,7 +594,7 @@ for (ix.name in names(model.results$coefs)){
   coefs.v[[ix.name]] <- model.results$coefs[[ix.name]]
   non.zero.ix        <- which(coefs.v[[ix.name]] != 0)
   #
-  names.tmp <- names(coefs.v[[ix.name]])[non.zero.ix]
+  names.tmp <- varnames[non.zero.ix]
   coef.tmp  <- coefs.v[[ix.name]][non.zero.ix]
   if (length(coefs.v) == 1) {
     # flog.info('  * Len == 0')
@@ -572,7 +615,7 @@ gene.ids <- non.zero.df.out$gene.id
 
 
 ```{r non.zero, include=FALSE}
-gene.names <- gene.names(gene.ids)
+gene.names <- geneNames(gene.ids)
 new.t      <- non.zero.df.out
 ixs        <- gene.names[unlist(sapply(new.t$gene.id, function(s) { which(gene.names$ensembl_gene_id == s) })),]
 new.t$gene.id[new.t$gene.id %in% ixs$ensembl_gene_id] <- ixs$external_gene_name
@@ -588,28 +631,31 @@ non.zero.df.out <- non.zero.df.out[,c(which(col.ix), which(!col.ix))]
 
 #### Overlap between models *(with same target number of variables)*
 
-```{r venn.coef, echo=FALSE}
+```{r venn.coef, warning=FALSE, echo=FALSE, fig.width=8, fig.height=7}
 all.names  <- names(model.results$coefs)
-all.names <- all.names[grep('^(degree_new)|^(orphan\\.)|^(glmnet\\.)', all.names)]
-all.model  <- unique(gsub('^([a-zAZ]+)\\.(.+)$', '\\1', gsub('_new', '', all.names)))
-all.origin <- gsub('^([a-zAZ]+)\\.(.+)$', '\\2', gsub('_new', '', all.names))
+all.names  <- all.names[grep('^(degree_new--)|^(orphan--)|^(glmnet--)', all.names)]
+all.model  <- unique(gsub('^([a-zAZ]+)--(.+)$', '\\1', gsub('_new', '', all.names)))
+all.origin <- gsub('^([a-zAZ]+)--(.+)$', '\\2', gsub('_new', '', all.names))
 
 for (type in unique(all.origin)) {
   ll <- list()
   for (ix.name in all.names[which(grepl(type, all.names))]) {
-     label <- prettify.labels(ix.name, 'model')
+     label <- sprintf('%s (%d)', prettify.labels(ix.name, 'model'), sum(!is.na(non.zero.df.out[, sprintf('coef.%s', ix.name)])))
      ll[[label]] <- sort(non.zero.df.out$gene.id[!is.na(non.zero.df.out[, sprintf('coef.%s', ix.name)])])
   }
   tryCatch({
-    vv <- Venn(ll)
-    gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = FALSE)), top= prettify.labels(type, 'string'))
+    draw.3venn(ll, prettify.labels(type, 'string.base'))
+    #vv <- Venn(ll)
+    #gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = FALSE)), top= prettify.labels(type, 'string'))
   }, error = function(err) { flog.error('Probel with %s', err)})
 }
 ```
 
 ### Table of genes in models
 
-```{r genes.table, echo=FALSE}
+*(not running at the moment)*
+
+```{r genes.table, echo=FALSE, eval=FALSE}
 knitr::kable(non.zero.df.out)
 ```
 
@@ -630,7 +676,9 @@ melt(df.no.hallmarks, id.vars = 'gene.name') %>%
     theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = 'none')
 ```
 
-```{r biclust, fig.height=10, echo=FALSE}
+*(not running at the moment)
+
+```{r biclust, fig.height=10, echo=FALSE, eval=FALSE}
 df.scaled <- my.hallmarks$hallmarks
 df.scaled <- data.frame(gene.name = rownames(df.scaled), df.scaled, stringsAsFactors = FALSE)
 
@@ -680,122 +728,208 @@ if (params$train >= 1) {
     calc.params      <- params[c('alpha', 'subset', 'train', 'calc.params.old', 'target.vars')]
     calc.params$seed <- seed
     #
+    flog.info(sprintf('Resampling with seed: %d (%d)', seed, which(seed == seed.vec)))
     my.output <- capture.output(ret.val <- run.cache(call.results,
                      xdata, ydata, 
                      penalty.factor.degree.new, 
                      penalty.factor.degree.old, 
                      penalty.factor.orphan,
                      calc.params,
+                     no.models = TRUE,
                      no.plot = TRUE,
                      #
-                     cache.digest = list(NULL, xdata.digest.cache, ydata.digest.cache),
+                     cache.digest = list(xdata.digest.cache, ydata.digest.cache),
                      cache.prefix = 'big-diff',
                      show.message = TRUE))
     
-    flog.info(sprintf('Resampling with seed: %d', seed), my.output, capture = TRUE)
+    flog.info(sprintf('Finish with seed: %d (%d)', seed, which(seed == seed.vec)), my.output, capture = TRUE)
+    flog.info('------------------------ end of iteration')
+    # Reduce memory footprint
+    ret.val$result <- NULL
+    ret.val$models <- NULL
+    for (ix.coef.names in names(ret.val$coefs)) {
+     names(ret.val$coefs[[ix.coef.names]]) <- NULL
+    }
     return(ret.val)
   #}, mc.cores = 1, mc.allow.recursive = FALSE)
-  }, mc.cores = min(params$n.cores), mc.allow.recursive = FALSE)
+  }, mc.cores = min(params$n.cores), mc.allow.recursive = FALSE, mc.preschedule = FALSE)
   
   #if (params$ntimes == 1) {
   #  ntimes.results <- list(ntimes.results)
   #}
   
-  big.df <- data.frame()
+  big.df  <- data.frame()
+  rank.df <- tibble()
   for (ix in seq_along(ntimes.results)) {
-    el        <- ntimes.results[[ix]]$metrics
+    el <- ntimes.results[[ix]]$metrics
     for (ix.el in names(el)) {
       my.values <- sapply(names(el[[ix.el]]), function(ix.model) {el[[ix.el]][[ix.model]]})
       my.names  <- rep(ix.el, length(my.values))
       my.models <- names(el[[ix.el]])
       new.line  <- data.frame(metric = my.names, model = my.models, values = as.numeric(my.values), stringsAsFactors = FALSE)
       big.df    <- rbind(big.df, new.line)
+      
+      #
+      sorted.ix <- sort(my.values)
+      base.models <- prettify.labels(my.models, 'string.base')
+      
+      for(base.ix in unique(base.models)) {
+        ixs <- which(base.models == base.ix)
+        my.rank <- my.models[ixs][sort(my.values[ixs], index.return = TRUE)$ix]
+        order.fun <- if (grepl('c.index', my.names[1])) {
+          function(vec) { rev(vec) }
+        } else {
+          function(vec) { vec }
+        }
+        my.rank <- order.fun(my.rank)
+        new.el <- c(list(my.names[1], base.ix), prettify.labels(my.rank, 'model'))
+        names(new.el) <- c('type', 'base.model', paste0('X', seq_len(length(new.el) - 2)))
+        rank.df <- rbind(rank.df, as.tibble(new.el))
+      }
+      
     }
   }
   #big.df$model <- factor(big.df$model, levels = c('glmnet', 'degree', 'orphan'), labels = c('GLMNET', 'DegreeCox', 'OrphanCox'))
   big.df$metric <- factor(big.df$metric, levels = c('c.index.train', 'c.index.test', 'km.train', 'km.test'), 
+                                                    labels = c('C-Index (Train set)', 'C-Index (Test set)', 'Log-rank (Train set)', 'Log-rank (Test set)'))
+  
+  rank.df$type <- factor(rank.df$type, levels = c('c.index.train', 'c.index.test', 'km.train', 'km.test'), 
                                                     labels = c('C-Index (Train set)', 'C-Index (Test set)', 'Log-rank (Train set)', 'Log-rank (Test set)'))
 }
 ```
 
 ## C-Index distribution
 
-```{r c.index.iter, echo=FALSE, fig.height=20}
+### Test set
+
+```{r c.index.iter, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  as.tbl(big.df) %>%
+    mutate(model.str = prettify.labels(model, 'string.short')) %>%
+    mutate(model.name = prettify.labels(model, 'model')) %>%
+    filter(metric %in% c('C-Index (Test set)')) %>%
+    filter(values >= 0) %>%
+    ggplot() +
+      #geom_freqpoly(aes(values, color = model), alpha = .75, bins = 100) +
+      stat_density(aes(values, fill = model.str), alpha = .75, adjust = 1/5) + 
+      facet_wrap(model.str ~ metric, ncol = 3) +
+      theme_minimal() + theme(legend.position = 'none') +
+      ggtitle('C-Index for Test set')
+}
+```
+
+#### Rank
+
+```{r rank.c.index.test, warning=FALSE}
+filter.by <- 'C-Index (Test set)'
+rank.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(base.model, X1, X2, X3) %>%
+  reshape2::melt(id.vars = 'base.model') %>%
+  { 
+    ggplot(.) + 
+      geom_histogram(aes(value, fill = variable), stat = 'count') +
+      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+      theme(legend.position = 'right') +
+      facet_wrap( ~ base.model, ncol = 1)
+  }
+```
+
+
+### Train set
+
+```{r c.iter.train, echo=FALSE, fig.height=20}
 if (nrow(big.df) > 0) {
   as.tbl(big.df) %>%
     mutate(model = prettify.labels(model, 'string.short')) %>%
-    filter(metric %in% c('C-Index (Train set)', 'C-Index (Test set)')) %>%
+    filter(metric %in% c('C-Index (Train set)')) %>%
     filter(values >= 0) %>%
     ggplot() +
-      geom_freqpoly(aes(values, color = model), alpha = .75, bins = 100) + 
-      facet_wrap(model ~ metric, ncol = 2) +
-      theme_minimal() + theme(legend.position = 'none')  
+      #geom_freqpoly(aes(values, color = model), alpha = .75, bins = 100) + 
+      stat_density(aes(values, fill = model), alpha = .75, adjust = 1/5) + 
+      facet_wrap(model ~ metric, ncol = 3) +
+      theme_minimal() + theme(legend.position = 'none') +
+      ggtitle('C-index for Train set')
 }
+```
+
+#### Rank
+
+```{r rank.c.index.train, warning=FALSE}
+filter.by <- 'C-Index (Train set)'
+rank.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(base.model, X1, X2, X3) %>%
+  reshape2::melt(id.vars = 'base.model') %>%
+  { 
+    ggplot(.) + 
+      geom_histogram(aes(value, fill = variable), stat = 'count') +
+      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+      theme(legend.position = 'right') +
+      facet_wrap( ~ base.model, ncol = 1)
+  }
 ```
 
 ## Log-rank test on Kaplan-Meier models
 
-Separated by high and low risk groups
+Distribution of Log-rank test with groups separated by high and low risk groups
 
-```{r pvalue.itre, echo=FALSE, fig.height=15}
+```{r pvalue.itre, echo=FALSE, fig.height=10}
 if (nrow(big.df) > 0) {
-  
   big.df %>%
-    mutate(model = prettify.labels(model, 'string.short')) %>%
-    #filter(model %in% c('glmnet.selected.25', 'glmnet.selected.25' , 'lmnet.selected.25')) %>%
-    filter(metric %in% c('Log-rank (Test set)')) %>%
-    ggplot() +
-      geom_vline(xintercept = .05, linetype = 2,  alpha = .2) +
-      geom_freqpoly(aes(values, color = model), alpha = .75, bins = 300) + 
-      facet_wrap(model ~ metric, ncol = 1) +
-      ggtitle('Distribution of Log-Rank up until 0.05') +
-      theme_minimal() + theme(legend.position = 'none') + coord_cartesian(xlim = c(0, 0.1))
-  
-  big.df %>%
-    mutate(model = prettify.labels(model, 'string.short')) %>%
+    mutate(base.model = prettify.labels(model, 'string.base'),
+           string.model = prettify.labels(model, 'string.short'),
+           model.name = prettify.labels(model, 'model')) %>%
     #filter(model %in% c('glmnet.classic.cv.28', 'degree_new.classic.cv.28', 'orphan.classic.cv.28')) %>%
     filter(metric %in% c('Log-rank (Test set)')) %>%
     ggplot() +
       geom_vline(xintercept = .05, linetype = 2,  alpha = .2) +
-      geom_freqpoly(aes(values, color = model), alpha = .75, bins = 300) + 
-      facet_wrap(model ~ metric, ncol = 1) +
+      annotate("text", x = 0.05, y = Inf, label = ' 0.05', alpha = .2, hjust = 0, vjust = 2) +
+      #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
+      #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
+      geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
+      facet_wrap( ~ base.model, ncol = 1) +
       ggtitle('Full distribution Log-rank') +
-      theme_minimal() + theme(legend.position = 'none')
+      theme_minimal() + theme(legend.position = 'bottom')
 }
 ```
 
-```{r}
+#### Rank
+
+```{r rank.log.rank.train, warning=FALSE}
+filter.by <- 'Log-rank (Test set)'
+rank.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(base.model, X1, X2, X3) %>%
+  reshape2::melt(id.vars = 'base.model') %>%
+  { 
+    ggplot(.) + 
+      geom_histogram(aes(value, fill = variable), stat = 'count') +
+      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+      theme(legend.position = 'right') +
+      facet_wrap( ~ base.model, ncol = 1)
+  }
+```
+
+```{r determine.consensus}
 if (nrow(big.df) > 0) {
   consensus <- list()
   all.conse <- list()
   
+  var.names <- as.character(colnames(xdata[,xdata.ix]))
+  
   for (ix in ntimes.results) {
    for (ix.2 in names(ix$coefs)) {
       all.conse[[ix.2]] <- c(all.conse[[ix.2]], (ix$coefs[[ix.2]] %>% { 
-        names(.[. != 0]) 
+        var.names[. != 0]
       } ))
       consensus[[ix.2]] <- unique(c(consensus[[ix.2]], (ix$coefs[[ix.2]] %>% { 
-        names(.[. != 0]) 
+        var.names[. != 0]
       } )))
     }
   }
   all.conse.tbl <- lapply(all.conse, table)
   # consensus.external <- lapply(consensus, gene.names)
-}
-```
-
-```{r consensus.histogram, warning=FALSE, fig.height=10, echo=FALSE}
-if (nrow(big.df) > 0) {
-  melt(all.conse) %>%
-    mutate(L1.suffix = sub('[a-z0-9_]+\\.', '', L1)) %>%
-    mutate(L1.prefix = sub('\\.[a-z0-9_]+\\.[a-z0-9_]+$', '', L1)) %>%
-    #filter(value > 25) %>%
-    ggplot() +
-    geom_histogram(aes(value, color = L1.prefix, fill = L1.prefix), alpha = .2, stat = 'count') +
-    theme(legend.position = 'top', axis.text.y = element_blank()) +
-    xlab('Genes') + ylab('Number of times gene is selected') +
-    facet_wrap( ~ L1.suffix, ncol = 1, scales = 'free_x') + 
-    theme_minimal()
 }
 ```
 
@@ -821,29 +955,27 @@ if (nrow(big.df) > 0) {
 
 ## Overlap between variables selected
 
-```{r consensus.venn, echo=FALSE}
+```{r consensus.venn, warning=FALSE, echo=FALSE, fig.width=8, fig.height=7}
 if (nrow(big.df) > 0) {
   all.names  <- names(model.results$coefs)
-  all.names <- all.names[grep('^(degree_new)|^(orphan\\.)|^(glmnet\\.)', all.names)]
-  all.model  <- unique(gsub('^([a-zAZ]+)\\.(.+)$', '\\1', gsub('_new', '', all.names)))
-  all.origin <- gsub('^([a-zAZ]+)\\.(.+)$', '\\2', gsub('_new', '', all.names))
+  all.names  <- all.names[grep('^(degree_new--)|^(orphan--)|^(glmnet--)', all.names)]
+  all.model  <- unique(gsub('^([a-zAZ]+)--(.+)$', '\\1', gsub('_new', '', all.names)))
+  all.origin <- gsub('^([a-zAZ]+)--(.+)$', '\\2', gsub('_new', '', all.names))
   
   for (type in unique(all.origin)) {
     ll <- list()
     for (ix.name in all.names[which(grepl(type, all.names))]) {
-       label <- prettify.labels(ix.name, 'model')
-     ll[[label]] <- sort(non.zero.df.out$gene.id[!is.na(non.zero.df.out[, sprintf('coef.%s', ix.name)])])
-  }
-  tryCatch({
-    vv <- Venn(ll)
-    gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = FALSE)), top= prettify.labels(type, 'string'))
-    }, error = function(err) { flog.error('Probel with %s', err)})
+      label <- sprintf('%s (%d)', prettify.labels(ix.name, 'model'), length(all.conse.tbl[[ix.name]]))
+      ll[[label]] <- sort(names(all.conse.tbl[[ix.name]]))
+    }
+    tryCatch({
+      draw.3venn(ll, prettify.labels(type, 'string.base'))
+      #vv <- Venn(ll)
+      #gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = TRUE, type = 'circles')), top = prettify.labels(type, 'string.base'))
+      }, error = function(err) { flog.error('Probel with %s', err)})
   }
 }
 ```
-
-
-
 
 
 
@@ -857,220 +989,4 @@ if (nrow(big.df) > 0) {
 
 ```{r parms, echo=FALSE}
 show.params(params)
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r, eval=FALSE, include=FALSE}
-rmarkdown::render('Analysis.Rmd', output_file = 'brca7.html', params = list(alpha = .7))
-rmarkdown::render('Analysis.Rmd', output_file = 'brca3.html', params = list(alpha = .3))
-rmarkdown::render('Analysis.Rmd', output_file = 'brca5.html', params = list(alpha = .5))
-```
-
-
-```{r, eval=FALSE, include=FALSE}
-rmarkdown::render('Network_Penalization_TCGA.Rmd', output_file = 'brca.html', params = list(project = 'brca'))
-rmarkdown::render('Network_Penalization_TCGA.Rmd', output_file = 'prad.html', params = list(project = 'prad'))
-rmarkdown::render('Network_Penalization_TCGA.Rmd', output_file = 'skcm.html', params = list(project = 'skcm', tissue = 'metastatic'))
-```
-
-
-```{r, eval=FALSE, include=FALSE}
-run.me <- function(my.params) {
-  dir.create('reports', showWarnings = F)
-  rmarkdown::render('Network_Penalization_TCGA.Rmd',
-                    output_file = sprintf('./reports/project-%s__train-%.2f__alpha-%.2f__cutoff-%.4f__type-%s__unw-%s.html', 
-                                          my.params$project,
-                                          my.params$train,
-                                          my.params$alpha,
-                                          my.params$degree.cutoff,
-                                          my.params$degree.type,
-                                          my.params$degree.unweighted),
-                    params = my.params)
-}
-
-my.list <-list(
-  #
-  # Covariance
-  #
-  # binary network
-  #
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 1),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 1),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 1),
-  list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 0.8),
-  list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 0.8),
-  list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 0.8),
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 0.9),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 0.9),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'brca', train = 0.9),
-  #
-  #
-  # PROBLEM!!
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 1),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 1),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 1),
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 0.8),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 0.8),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 0.8),
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 0.9),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 0.9),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'prad', train = 0.9),
-  #
-  #
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 1),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 1),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 1),
-  #list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 0.8),
-  #list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 0.8),
-  #list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 0.8),
-  list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 0.9),
-  list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 0.9),
-  list(alpha = 0.7, degree.cutoff = 0, degree.type = 'string',  degree.unweighted = TRUE, project = 'skcm', train = 0.9),
-  list(end = T)
-  )
-
-library(parallel)
-library(foreach)
-library(doParallel)
-
-#cl<-makeCluster(3)
-#registerDoParallel(cl)
-
-#foreach(ix = my.list, .combine = c) %dopar% {
-for (ix in my.list) {
- if (is.null(ix[['end']]) || !ix[['end']]) {
-   run.me(ix)
- }
- NULL
-}
-
-#stopCluster(cl)
-```
-
-
-```{r, eval=FALSE, include=FALSE}
-run.me <- function(my.params) {
-  rmarkdown::render('Network_Penalization_TCGA.Rmd',
-                    output_file = sprintf('alpha-%.2f__cutoff-%.4f__type-%s__unw-%s.html', 
-                                          my.params$alpha,
-                                          my.params$degree.cutoff,
-                                          my.params$degree.type,
-                                          my.params$degree.unweighted),
-                    params = my.params)
-}
-
-(env.spa <- new.env()) %>% load('../saves/quantile.abs-sparsebn.RData', envir = .)
-(env.cor <- new.env()) %>% load('../saves/quantile.abs-correlation.RData', envir = .)
-(env.cov <- new.env()) %>% load('../saves/quantile.abs-covariance.RData', envir = .)
-
-cor.spa <- env.spa$result
-cor.cor <- env.cor$result
-cor.cov <- env.cov$result
-
-my.list <-list(
-  #
-  # Covariance
-  #
-  # binary network
-  list(alpha = 1.0, degree.cutoff = cor.cov['99.99%'], degree.type = 'covariance',  degree.unweighted = TRUE),
-  list(alpha = 0.5, degree.cutoff = cor.cov['99.99%'], degree.type = 'covariance',  degree.unweighted = TRUE),
-  list(alpha = 0.0, degree.cutoff = cor.cov['99.99%'], degree.type = 'covariance',  degree.unweighted = TRUE),
-  #
-  # using weights
-  list(alpha = 1.0, degree.cutoff = cor.cov['99.99%'], degree.type = 'covariance',  degree.unweighted = FALSE),
-  list(alpha = 0.5, degree.cutoff = cor.cov['99.99%'], degree.type = 'covariance',  degree.unweighted = FALSE),
-  list(alpha = 0.0, degree.cutoff = cor.cov['99.99%'], degree.type = 'covariance',  degree.unweighted = FALSE),
-  #
-  # Correlation
-  #
-  # binary network
-  list(alpha = 0.5, degree.cutoff = cor.cor['99.99%'],  degree.type = 'correlation', degree.unweighted = TRUE),
-  list(alpha = 1.0, degree.cutoff = cor.cor['99.99%'],  degree.type = 'correlation', degree.unweighted = TRUE),
-  list(alpha = 0.0, degree.cutoff = cor.cor['99.99%'],  degree.type = 'correlation', degree.unweighted = TRUE),
-  list(alpha = 0.5, degree.cutoff = cor.cor['99%'],     degree.type = 'correlation', degree.unweighted = TRUE),
-  list(alpha = 1.0, degree.cutoff = cor.cor['99%'],     degree.type = 'correlation', degree.unweighted = TRUE),
-  list(alpha = 0.0, degree.cutoff = cor.cor['99%'],     degree.type = 'correlation', degree.unweighted = TRUE),
-  # using weights
-  list(alpha = 0.5, degree.cutoff = cor.cor['99.99%'],  degree.type = 'correlation', degree.unweighted = FALSE),
-  list(alpha = 1.0, degree.cutoff = cor.cor['99.99%'],  degree.type = 'correlation', degree.unweighted = FALSE),
-  list(alpha = 0.0, degree.cutoff = cor.cor['99.99%'],  degree.type = 'correlation', degree.unweighted = FALSE),
-  list(alpha = 0.5, degree.cutoff = cor.cor['99%'],     degree.type = 'correlation', degree.unweighted = FALSE),
-  list(alpha = 1.0, degree.cutoff = cor.cor['99%'],     degree.type = 'correlation', degree.unweighted = FALSE),
-  list(alpha = 0.0, degree.cutoff = cor.cor['99%'],     degree.type = 'correlation', degree.unweighted = FALSE),
-  #
-  # STRING (Pedro Martinho)
-  # 
-  # binary network
-  list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string', degree.unweighted = TRUE),
-  list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string', degree.unweighted = TRUE),
-  list(alpha = 0.0, degree.cutoff = 0, degree.type = 'string', degree.unweighted = TRUE),
-  # using weights
-  list(alpha = 0.5, degree.cutoff = 0, degree.type = 'string', degree.unweighted = FALSE),
-  list(alpha = 1.0, degree.cutoff = 0, degree.type = 'string', degree.unweighted = FALSE),
-  list(alpha = 0.0, degree.cutoff = 0, degree.type = 'string', degree.unweighted = FALSE),
-  #
-  # SparseBN (João Brito)
-  #
-  # binary network
-  list(alpha = 0.5, degree.cutoff = 0,              degree.type = 'sparsebn', degree.unweighted = TRUE),
-  list(alpha = 1.0, degree.cutoff = 0,              degree.type = 'sparsebn', degree.unweighted = TRUE),
-  list(alpha = 0.0, degree.cutoff = 0,              degree.type = 'sparsebn', degree.unweighted = TRUE),
-  list(alpha = 0.5, degree.cutoff = cor.spa['99%'], degree.type = 'sparsebn', degree.unweighted = TRUE),
-  list(alpha = 1.0, degree.cutoff = cor.spa['99%'], degree.type = 'sparsebn', degree.unweighted = TRUE),
-  list(alpha = 0.0, degree.cutoff = cor.spa['99%'], degree.type = 'sparsebn', degree.unweighted = TRUE),
-  # 
-  list(alpha = 0.5, degree.cutoff = 0,              degree.type = 'sparsebn', degree.unweighted = FALSE),
-  list(alpha = 1.0, degree.cutoff = 0,              degree.type = 'sparsebn', degree.unweighted = FALSE),
-  list(alpha = 0.0, degree.cutoff = 0,              degree.type = 'sparsebn', degree.unweighted = FALSE),
-  list(alpha = 0.5, degree.cutoff = cor.spa['99%'], degree.type = 'sparsebn', degree.unweighted = FALSE),
-  list(alpha = 1.0, degree.cutoff = cor.spa['99%'], degree.type = 'sparsebn', degree.unweighted = FALSE),
-  list(alpha = 0.0, degree.cutoff = cor.spa['99%'], degree.type = 'sparsebn', degree.unweighted = FALSE),
-  #
-  list(end = T)
-  )
-
-library(parallel)
-library(foreach)
-library(doParallel)
-
-cl<-makeCluster(10)
-registerDoParallel(cl)
-
-foreach(ix = my.list, .combine = c) %dopar% {
- if (is.null(ix[['end']]) || !ix[['end']]) {
-   run.me(ix)
- }
- NULL
-}
-
-stopCluster(cl)
 ```

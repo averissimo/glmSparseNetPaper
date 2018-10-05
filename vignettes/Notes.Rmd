@@ -1,0 +1,87 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+TODO:
+ - Scatter plot com valores de métricas (3 pares)
+ - ecdf em adição ao density plot
+
+Robustez do método
+ - Runs dá coisas diferentes
+ - Uma forma para escolher um bom modelo para treinar (simulando várias partições)
+ - Em particular nós usamos esta framework para escolher um modelo particular para mostrar resultados
+ - Isto não é visto em resultados de papers-- pq há muitos runs q não dão significativos
+
+Rank dos 3 métodos
+
+O que usar como tempo de follow-up (inconsistência entre melanoma e breast)
+
+Dar nomes aos resultados
+ - estabilidade
+ - consistência de genes seleccionados
+
+Identificar as dificuldades em avaliar os resultados
+
+```{r setup}
+devtools::load_all()
+```
+
+
+```{r}
+try(my.render('Analysis.Rmd'))
+try(my.render('Analysis.Rmd'))
+try(my.render('Analysis.Rmd'))
+try(my.render('Analysis.Rmd'))
+try(my.render('Analysis.Rmd'))
+try(my.render('Analysis.Rmd'))
+
+my.render('Analysis.Rmd', output_file = 'brca-center-5000.html', 
+          params = list(normalization = 'center', 
+                        project       = 'brca.data.2018.09.13',
+                        tissue        = 'primary.solid.tumor',
+                        subtract.surv.column = NULL,
+                        ntimes        = 5000,
+                        target.vars   = list(glmnet = list(alpha = .2, vars = 39), 
+                                             hub    = list(alpha = .2, vars = 56), 
+                                             orphan = list(alpha = .2, vars = 42))
+                        ))
+
+my.render('Analysis.Rmd', output_file = 'skcm-center-5000.html', 
+          params = list(normalization = 'center', 
+                        project       = 'skcm.data.2018.09.11', 
+                        tissue        = 'metastatic',
+                        subtract.surv.column = 'days_to_submitted_specimen_dx',
+                        ntimes        = 5000, 
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 116), 
+                                             hub    = list(alpha = .1, vars = 41),
+                                             orphan = list(alpha = .1, vars = 111))
+                        ))
+
+```
+
+```{r}
+my.render('OptimalVariableSize.Rmd', output_file = 'brca-optimal-1.html', 
+          params = list(seed.additional = 1,
+                        project         = 'brca.data.2018.09.13',
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', output_file = 'skcm-optimal-1.html', 
+          params = list(seed.additional = 1,
+                        project         = 'skcm.data.2018.09.11',
+                        tissue          = 'metastatic'))
+
+my.render('OptimalVariableSize.Rmd', output_file = 'brca-optimal-4.html', 
+          params = list(seed.additional = 4,
+                        project         = 'brca.data.2018.09.13',
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', output_file = 'skcm-optimal-4.html', 
+          params = list(seed.additional = 4,
+                        project         = 'skcm.data.2018.09.11',
+                        tissue          = 'metastatic'))
+```
+
+
+
+

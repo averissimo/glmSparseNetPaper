@@ -20,8 +20,8 @@ vignette: >
   %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
   %\VignetteEncoding{UTF-8}
 params:
-  project: 'brca' # skcm prad brca
-  tissue: 'primary.solid.tumor' # primary.solid.tumor metastatic solid.tissue.normal
+  project: 'skcm.data.2018.09.11' # skcm prad brca
+  tissue: 'metastatic' # primary.solid.tumor metastatic solid.tissue.normal
   coding.genes: !r TRUE
   degree.unweighted: !r TRUE
   degree.correlation: 'pearson'
@@ -46,16 +46,9 @@ params:
   calc.params.old: !r FALSE
 ---
 
-```{r, include=FALSE, eval=FALSE}
-rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
-rmarkdown::render('OptimalVariableSize.Rmd', output_format = BiocStyle::html_document())
-rmarkdown::render('Analysis.Rmd', output_file = 'brca-max.html', params = list(normalization = 'max'), output_format = BiocStyle::html_document())
-```
-
-
+```{r, message=FALSE, warning=FALSE, include=FALSE}
 # Libraries
 
-```{r, message=FALSE, warning=FALSE}
 library(futile.logger)
 library(parallel)
 library(glmnet)
@@ -84,27 +77,39 @@ devtools::load_all()
 .Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
 .Last.value <- show.message(FALSE)
 .Last.value <- flog.layout(layout.format('[~l ~t] ~m'))
-.Last.value <- flog.appender(appender.tee(sprintf('logger-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S'))))
+.Last.value <- flog.appender(appender.tee(sprintf('logger-optimal-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S'))))
 theme_set(theme_minimal())
 ```
 
 # Load and normalize data
 
-## Load TCGA data
+## Load TCGA data using `prepare.tcga.survival.data.old` function
+
+```{r, results='asis', echo=FALSE}
+cat("```\n")
+cat("# Number of resampling folds: ", params$seed.additional, '\n', sep = '')
+cat('prepare.tcga.survival.data.old(\'', params$project, '\',\n', sep = '')
+cat('                               \'', params$tissue, '\',\n', sep = '')
+cat('                                normalization      = \'', params$normalize, '\',\n', sep = '')
+cat('                                log2.pre.normalize = ', params$log2, ',\n', sep = '')
+cat('                                handle.duplicates  = \'', params$handle.duplicates, '\',\n', sep = '')
+cat('                                coding.genes       = ', params$coding.genes, ')\n', sep = '')
+cat("```\n")
+```
 
 ```{r load.data, include=FALSE}
-my.data <- run.cache(prepare.tcga.survival.data.old, 
+my.data <- run.cache(prepare.tcga.survival.data, 
                      params$project, 
                      params$tissue, 
                      #
                      #input.type                = 'rna',
                      normalization             = params$normalize,
                      log2.pre.normalize        = params$log2,
-                     #include.negative.survival = FALSE,
                      #
                      handle.duplicates         = params$handle.duplicates, 
                      coding.genes              = params$coding.genes,
-                     cache.prefix              = 'tcga-data',
+                     #subtract.suv.column       = 'days_to_submitted_specimen_dx',
+                     cache.prefix              = 'tcga-data.new',
                      show.message = T)
 #
 clinical <- my.data$clinical
@@ -123,7 +128,9 @@ rm(my.data)
 
 ## Load degree data
 
-```{r degree.load}
+Using `r params$degree.type` network
+
+```{r degree.load, include=FALSE}
 if (params$degree.type == 'oldie') {
   #
   # Load old matrix used in SPARSA conference
@@ -155,8 +162,9 @@ if (params$degree.type == 'oldie') {
 } else if (params$degree.type == 'string') {
   #
   # Load degree of STRING network downloaded from external sources
-  degree <- run.cache(string.db.homo.sapiens) %>% {
-    run.cache(build.string.network, ., use.names = 'ensembl')
+  degree <- run.cache(string.db.homo.sapiens, cache.prefix = "stringDB") %>% {
+    run.cache(build.string.network, ., use.names = 'ensembl', 
+              cache.prefix = 'string-network')
     } %>% {
       .@x[.@x <= params$degree.cutoff] <- 0
       if (params$degree.unweighted) {
@@ -180,7 +188,7 @@ if (params$degree.type == 'oldie') {
 }
 ```
 
-### Penalty
+# Penalty
 
 ## Preparing degree vector
 
@@ -239,9 +247,14 @@ penalty.factor.orphan <- trans.fun(norm.orig.penalty.factor)
 
 ## Cross-validation
 
-Testing classic elastic-net, DegreeCox and OrphanCox with cross-validation to find optimal number of variables for comparisson models.
+Testing with cross-validation to find optimal number of variables for comparisson models.
 
-```{r cv.models, echo=FALSE}
+* Classic elastic-net
+* DegreeCox
+* HubCox
+* OrphanCox 
+
+```{r cv.models, echo=FALSE, include=FALSE}
 alpha.models <- tibble(alpha = numeric(), seed = numeric(), glmnet = list(), hub = list(), orphan = list())
 
 for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
@@ -270,7 +283,7 @@ for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
     
     alpha.models <- rbind(alpha.models, new.line)
     
-    save(new.line, file = sprintf('cv.value/cv.value_%s_xdata-%s_ydata-%s', glmSparseNet::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
+    save(new.line, file = sprintf('cv.value/cv.value_%s_xdata-%s_ydata-%s', loose.rock::digest.cache(new.line), xdata.digest.cache, loose.rock::digest.cache(ydata)))
     
     flog.info('  * Finished run with alpha %.3f', ix.alpha)
   }
@@ -279,7 +292,7 @@ for (ix.seed in seq(params$seed, params$seed + params$seed.additional)) {
 
 ## Selected variables
 
-```{r, echo=FALSE}
+```{r selected.summary, echo=FALSE}
 sel.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
   if (is.numeric(ix.name[[1]])) {
     return(ix.name[[1]])
@@ -302,7 +315,7 @@ Individuals are separated by the coefficients estimated by the model in two grou
 
 ### Summary table for each model type *(mean is used)*
 
-```{r, echo=FALSE}
+```{r km.summary, echo=FALSE}
 km.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
   if (is.numeric(ix.name[[1]])) {
     return(ix.name[[1]])
@@ -311,7 +324,7 @@ km.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
     if (sum(best.coef[best.coef != 0]) == 0) {
       return(NA)
     }
-    return(draw.kaplan(best.coef, xdata, ydata)$pvalue)
+    return(separate2groups.cox(best.coef, xdata, ydata)$pvalue)
   }
 })
 
@@ -324,14 +337,14 @@ km.all %>% as.data.frame %>%
 
 ### Kaplan-Meier estimator plot
 
-```{r, echo=FALSE}
+```{r km.plot, echo=FALSE}
 km.all %>% as.data.frame %>% 
   melt.data.frame(id.vars = 'alpha') %>% 
   mutate(Alpha = factor(alpha), Model = variable) %>%
   ggplot(aes(x = Alpha, y = value, color = Model)) + 
   geom_boxplot(alpha = .5) + 
   # geom_jitter(width = 0.2, size = .5) +
-  #expand_limits(y = .001) +
+  # expand_limits(y = .0025) +
   ggtitle('Kaplan-Meier estimator (per alpha parameter)', 
           subtitle = 'Two groups (High/Low risk of event) are estimated based on Cox model\'s coefficients')
 ```
@@ -343,7 +356,7 @@ Concordance C-Index calculates a value between 0 and 1 that represents the pairw
 
 ### Summary of results
 
-```{r, echo=FALSE}
+```{r c.index.summary, echo=FALSE}
 c.index.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
   if (is.numeric(ix.name[[1]])) {
     return(ix.name[[1]])
@@ -364,12 +377,13 @@ c.index.all %>% as.data.frame %>%  group_by(alpha) %>%
 
 ### C-Index plot
 
-```{r}
+```{r c.index.plot}
 c.index.all  %>% as.data.frame %>% 
   melt.data.frame(id.vars = 'alpha') %>% 
   mutate(Alpha = factor(alpha), Model = variable) %>%
   ggplot(aes(x = Alpha, y = value, color = Model)) + 
   geom_boxplot(alpha = .5) + 
+  expand_limits(y = c(1,0)) +
   # geom_jitter(width = 0.2) +
   ggtitle('Concordance C-Index (per alpha parameter)')
 ```
@@ -378,6 +392,17 @@ c.index.all  %>% as.data.frame %>%
 
 ## Parameters
 
-```{r parms, echo=FALSE}
+```{r params, echo=FALSE}
 show.params(params)
 ```
+
+
+```{r, eval=FALSE, include=FALSE}
+set.seed(1985)
+foldid    <- loose.rock::balanced.cv.folds(ydata$status, nfolds = 10)$output
+#
+
+new.model <- my.cv.glmnet(.2, xdata, ydata, penalty.factor.degree.new, parallel = params$n.cores, seed = 1985)
+new.model2 <- my.cv.glmnet(.2, xdata, ydata, penalty.factor.degree.new, parallel = params$n.cores, seed = 1985) 
+```
+
