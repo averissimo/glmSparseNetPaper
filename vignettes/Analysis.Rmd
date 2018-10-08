@@ -60,7 +60,7 @@ params:
   ntimes: !r 1000 # number of times that training set is tested
   #
   seed: !r 1985
-  n.cores: !r 10
+  n.cores: !r 12
   #
   calc.params.old: !r FALSE
 ---
