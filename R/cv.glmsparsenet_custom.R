@@ -35,16 +35,11 @@ my.cv.glmnet <- function(alpha,
                          ...)
 
   if (length(unique(new.model$nzero)) < 5) {
-    lambda.first <- new.model$lambda[1]
-
-    lambda.nrow <- 150
-    lambda.ncol <- 3
-
-    lambda <- (matrix(rep(1 / 10^seq(0, lambda.ncol - 1, 1), lambda.nrow),
-                      nrow = lambda.nrow, byrow = TRUE) *
-                 array(lambda.first * seq(1/lambda.nrow, 1, 1/lambda.nrow),
-                       dim = c(lambda.nrow, lambda.ncol))) %>%
-      as.vector %>% unique %>% sort(decreasing = TRUE)
+    # Builds a specific set of lambdas based on the initial lambda heuristic in glmnet
+    #  the default settings will generate lambda values:
+    #  * three orders of magnitude below
+    #  * 150 values per order of magnitude
+    lambda <- glmSparseNet::buildLambda(new.model$lambda[1])
 
     new.model <- glmnet.mclapply::cv.glmnet(xdata, Surv(ydata$time, ydata$status * 1),
                                             family           ='cox',
