@@ -3,10 +3,6 @@ title: "Untitled"
 output: html_document
 ---
 
-TODO:
- - Scatter plot com valores de métricas (3 pares)
- - ecdf em adição ao density plot
-
 Robustez do método
  - Runs dá coisas diferentes
  - Uma forma para escolher um bom modelo para treinar (simulando várias partições)
@@ -27,21 +23,53 @@ Identificar as dificuldades em avaliar os resultados
 devtools::load_all()
 ```
 
+```{r}
+n.cores <- 14
+
+my.render('Analysis.Rmd', output_file = 'brca-center-1000-random.html', 
+          params = list(normalization = 'center', 
+                        project       = 'brca.data.2018.09.13',
+                        tissue        = 'primary.solid.tumor',
+                        subtract.surv.column = NULL,
+                        balanced.sets = FALSE,
+                        ntimes        = 1000,
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .2, vars = 39), 
+                                             hub    = list(alpha = .2, vars = 56), 
+                                             orphan = list(alpha = .2, vars = 42))
+                        ))
+
+my.render('Analysis.Rmd', output_file = 'skcm-center-1000-random.html', 
+          params = list(normalization = 'center', 
+                        project       = 'skcm.data.2018.09.11', 
+                        tissue        = 'metastatic',
+                        balanced.sets = FALSE,
+                        n.cores       = n.cores,
+                        subtract.surv.column = 'days_to_submitted_specimen_dx',
+                        ntimes        = 1000, 
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 116), 
+                                             hub    = list(alpha = .1, vars = 41),
+                                             orphan = list(alpha = .1, vars = 111))
+                        ))
+```
+
+
 
 ```{r}
-try(my.render('Analysis.Rmd'))
-try(my.render('Analysis.Rmd'))
-try(my.render('Analysis.Rmd'))
-try(my.render('Analysis.Rmd'))
-try(my.render('Analysis.Rmd'))
-try(my.render('Analysis.Rmd'))
+n.cores <- 7
+
+#
+# Completely random training/test sets instead of balanced
+# 
 
 my.render('Analysis.Rmd', output_file = 'brca-center-5000.html', 
           params = list(normalization = 'center', 
                         project       = 'brca.data.2018.09.13',
                         tissue        = 'primary.solid.tumor',
                         subtract.surv.column = NULL,
+                        balanced.sets = TRUE,
                         ntimes        = 5000,
+                        n.cores       = n.cores,
                         target.vars   = list(glmnet = list(alpha = .2, vars = 39), 
                                              hub    = list(alpha = .2, vars = 56), 
                                              orphan = list(alpha = .2, vars = 42))
@@ -51,35 +79,71 @@ my.render('Analysis.Rmd', output_file = 'skcm-center-5000.html',
           params = list(normalization = 'center', 
                         project       = 'skcm.data.2018.09.11', 
                         tissue        = 'metastatic',
+                        balanced.sets = TRUE,
                         subtract.surv.column = 'days_to_submitted_specimen_dx',
                         ntimes        = 5000, 
+                        n.cores       = n.cores,
                         target.vars   = list(glmnet = list(alpha = .1, vars = 116), 
                                              hub    = list(alpha = .1, vars = 41),
                                              orphan = list(alpha = .1, vars = 111))
                         ))
-
 ```
 
 ```{r}
-my.render('OptimalVariableSize.Rmd', output_file = 'brca-optimal-1.html', 
-          params = list(seed.additional = 1,
-                        project         = 'brca.data.2018.09.13',
-                        tissue          = 'primary.solid.tumor'))
+n.cores <- 10
+seed.additional <- 4
 
-my.render('OptimalVariableSize.Rmd', output_file = 'skcm-optimal-1.html', 
-          params = list(seed.additional = 1,
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('skcm-optimal-%d.html', seed.additional + 1),
+          params = list(seed.additional = seed.additional,
                         project         = 'skcm.data.2018.09.11',
+                        subtract.surv.column = 'days_to_submitted_specimen_dx',
+                        n.cores         = n.cores,
                         tissue          = 'metastatic'))
 
-my.render('OptimalVariableSize.Rmd', output_file = 'brca-optimal-4.html', 
-          params = list(seed.additional = 4,
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('brca-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
                         project         = 'brca.data.2018.09.13',
+                        n.cores         = n.cores,
                         tissue          = 'primary.solid.tumor'))
 
-my.render('OptimalVariableSize.Rmd', output_file = 'skcm-optimal-4.html', 
-          params = list(seed.additional = 4,
-                        project         = 'skcm.data.2018.09.11',
-                        tissue          = 'metastatic'))
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('prad-optimal-%d.html', seed.additional + 1),
+          params = list(seed.additional = seed.additional,
+                        project         = 'prad.data.2018.10.11',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('ucec-optimal-%d.html', seed.additional + 1),
+          params = list(seed.additional = seed.additional,
+                        project         = 'ucec.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('kirc-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'kirc.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('luad-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'luad.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('lgg-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'lgg.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
 ```
 
 

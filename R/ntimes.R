@@ -8,13 +8,24 @@ call.results <- function(xdata,
                          penalty.factor.orphan,
                          params,
                          no.models = FALSE,
-                         no.plots = FALSE) {
-  #flog.info('seed: %d', seed)
-  set.seed(params$seed)
+                         no.plots = FALSE,
+                         balanced.sets = TRUE) {
 
   #
   # Build training data
-  ixs <- loose.rock::balanced.train.and.test(which(ydata$status), which(!ydata$status), train.perc = params$train)
+  set.seed(params$seed)
+  if (params$balanced.sets) {
+    ixs <- loose.rock::balanced.train.and.test(which(ydata$status),
+                                               which(!ydata$status),
+                                               train.perc = params$train)
+  } else {
+    temp.ixs   <- sample(seq_len(nrow(xdata)))
+    train.size <- seq_len(floor(params$train * nrow(xdata)))
+
+    ixs <- list()
+    ixs$train <- temp.ixs[train.size]
+    ixs$test  <- temp.ixs[-train.size]
+  }
 
   xdata.test <- xdata[ixs$test,]
   ydata.test <- ydata[ixs$test,]

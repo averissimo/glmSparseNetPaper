@@ -18,15 +18,24 @@ vignette: >
   %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
   %\VignetteEncoding{UTF-8}
 params:
+
+  #
+  # Prostate
+  # 
   
+  project: 'prad.data.2018.10.11' 
+  tissue: 'primary.solid.tumor'
+  subtract.surv.column: !r NULL # brca
+  target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
+      
   #
   # Breast Invasive Carcinoma
   # 
   
-  project: 'brca.data.2018.09.13' 
-  tissue: 'primary.solid.tumor'
-  subtract.surv.column: !r NULL # brca
-  target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
+  #project: 'brca.data.2018.09.13' 
+  #tissue: 'primary.solid.tumor'
+  #subtract.surv.column: !r NULL # brca
+  #target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
   
   #
   # Skin Melanoma
@@ -36,7 +45,6 @@ params:
   #tissue: 'metastatic'
   #subtract.surv.column: 'days_to_submitted_specimen_dx' # metastatic
   #target.vars: !r list(glmnet = list(alpha = .1, vars = 116), hub = list(alpha = .1, vars = 41), orphan = list(alpha = .1, vars = 111))
-  #
   
   #
   # Data
@@ -57,12 +65,13 @@ params:
   # subset of variables to be used (Inf for all)
   subset: !r Inf  # Random subset of variables to use, Inf for no subsetting
   train: !r .8    # train percentage
-  ntimes: !r 1000 # number of times that training set is tested
+  ntimes: !r 100  # number of times that training set is tested
   #
-  seed: !r 1985
-  n.cores: !r 12
+  seed: !r 1985   # seed being used throughout the cde
+  balanced.sets: !r FALSE
+  n.cores: !r 14  # number of cores to use in parallel-friendly chunks
   #
-  calc.params.old: !r FALSE
+  calc.params.old: !r FALSE # calculate 1/degreee penalty
 ---
 
 # Overview
@@ -72,6 +81,7 @@ params:
 * *TCGA project*: **`r params$project`**
 * *Tissue type*: **`r params$tissue`**
     * `r if(params$coding.genes) {'Only using coding genes'} else {'Using all genes (coding and non-coding)'}`
+* *Subtract survival time*: **`r if(!is.null(params$subtract.surv.column) {params$subtract.surv.column} else { 'Using survival time from diagnostics' }`**
 * *Degree calculation*: **`r params$degree.type`**
 
 **Normalization**
@@ -81,8 +91,8 @@ params:
 
 **Model options**
 
-* *Train/Test*: **`r params$train * 100`%**
-* *Alpha / Target variables*: `r paste(sapply(names(params$target.vars), function(ix) {sprintf('%s: %.2f / %d', ix, params$target.vars[[ix]]$alpha, params$target.vars[[ix]]$vars)}), collapse = ', ')`
+* *Train / Test*: **`r params$train * 100`%**
+* *Model (Alpha / Target variables)*: `r paste(sapply(names(params$target.vars), function(ix) {sprintf('%s (%.2f / %d)', ix, params$target.vars[[ix]]$alpha, params$target.vars[[ix]]$vars)}), collapse = ', ')`
   
 **Network processing**
 
@@ -143,7 +153,7 @@ devtools::load_all()
 .Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
 .Last.value <- show.message(FALSE)
 .Last.value <- flog.layout(layout.format('[~l] ~m'))
-.Last.value <- flog.appender(appender.tee(sprintf('logger-analysis-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S'))))
+.Last.value <- flog.appender(appender.tee(file.path('logs', sprintf('logger-analysis-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S')))))
 theme_set(theme_minimal())
 ```
 
@@ -155,7 +165,7 @@ theme_set(theme_minimal())
 * *Tissue type*: **`r params$tissue`**
     * `r if(params$coding.genes) {'Only using coding genes'} else {'Using all genes (coding and non-coding)'}`
 * *Degree calculation*: **`r params$degree.type`**
-* *Subtract surivival time*: **`r params$subtract.surv.column`**
+* *Subtract survival time*: **`r params$subtract.surv.column`**
 
 **Normalization**
 
@@ -164,7 +174,23 @@ theme_set(theme_minimal())
 
 ## Load TCGA data
 
-```{r}
+See `prepare.tcga.survival.data` function for how to configure parameters.
+
+This uses data packages from obtained from ['github:averissimo/tcga'](https://github.com/averissimo/tcga.data/releases) that contain FPKM expression levels.
+
+```{r, results='asis', echo=FALSE}
+cat("```\n")
+cat('prepare.tcga.survival.data(\'', params$project, '\',\n', sep = '')
+cat('                           \'', params$tissue, '\',\n', sep = '')
+cat('                            normalization        = \'', params$normalization, '\',\n', sep = '')
+cat('                            log2.pre.normalize   = ', params$log2, ',\n', sep = '')
+cat('                            handle.duplicates    = \'', params$handle.duplicates, '\',\n', sep = '')
+cat('                            coding.genes         = ', params$coding.genes, ',\n', sep = '')
+cat('                            subtract.surv.column = \'', params$subtract.surv.column, '\')\n', sep = '')
+cat("```\n")
+```
+
+```{r load_tcga, echo=FALSE}
 my.data <- run.cache(prepare.tcga.survival.data, 
                      params$project, 
                      params$tissue, 
@@ -191,6 +217,50 @@ xdata.raw.digest.cache <- my.data$xdata.raw.digest
 ydata.digest.cache     <- my.data$ydata.digest
 #
 rm(my.data)
+```
+
+### Summary of data
+
+```{r summary_data, echo=FALSE}
+flog.info('Loaded data from %s TCGA', params$project)
+flog.info('              type of tissue: %s', params$tissue)
+flog.info('  observations (individuals): %d (%d event / %d censored)', nrow(xdata), sum(ydata$status), sum(!ydata$status))
+flog.info('           variables (genes): %d', ncol(xdata))
+```
+
+### Survival curve
+
+```{r survival_curves, fig.height=10}
+ggsurv <- survfit(Surv(time, status) ~ 1, data = ydata %>% mutate(time = time/365*12)) %>% 
+  ggsurvplot(data = ydata,
+             conf.int = FALSE,
+             risk.table = TRUE,
+             cumcensor = TRUE,
+             xlab = "Time in months",
+             tables.height = .1,
+             surv.median.line = "hv",  # add the median survival pointer.
+             break.x.by = 12,
+             #ncensor.plot = TRUE,
+             ggtheme = theme_minimal())
+#
+ggsurv$plot <- ggsurv$plot + theme(legend.position = 'none') #+ scale_x_continuous('x', breaks = seq(0, max((ydata %>% mutate(time = time/365*12))$time) + 20, 20))
+ggsurv$ncensor.plot <- ggpar(ggsurv$ncensor.plot, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv$table <- ggpar(ggsurv$table, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv
+```
+
+```{r test.clinical.variables, fig.height=15, echo=FALSE, eval=FALSE}
+# Test physiological Variables
+
+# *note:* Plots with p-value `<= 0.05` are shown. Two types of p-values are used as criteria:
+
+# 1. Univariate cox model
+# 1. Log rank test when separating between high and low risk group
+
+all.plots <- run.cache(test.all.clinical, clinical, ydata, cache.prefix = 'allplots')
+
+multiplot(plotlist = all.plots$plot.list, layout = all.plots$layout)
+knitr::kable(dplyr::arrange(dplyr::select(all.plots$df, name, p.value, desc), p.value))
 ```
 
 ## Load degree data
@@ -263,51 +333,6 @@ if (params$degree.type == 'oldie') {
 }
 rm(xdata.raw)
 .Last.value <- gc(reset = TRUE, verbose = FALSE)
-```
-
-## Summary of data
-
-### Data
-
-```{r summary_data, echo=FALSE}
-flog.info('Loaded data from %s TCGA', params$project)
-flog.info('              type of tissue: %s', params$tissue)
-flog.info('  observations (individuals): %d (%d event / %d censored)', nrow(xdata), sum(ydata$status), sum(!ydata$status))
-flog.info('           variables (genes): %d', ncol(xdata))
-flog.info('             non-zero degree: %d', sum(degree != 0))
-```
-
-### Survival
-
-```{r}
-ggsurv <- survfit(Surv(time, status) ~ 1, data = ydata %>% mutate(time = time/365*12)) %>% 
-  ggsurvplot(data = ydata,
-             conf.int = FALSE,
-             risk.table = TRUE,
-             cumcensor = TRUE,
-             xlab = "Time in months",
-             surv.median.line = "hv",  # add the median survival pointer.
-             #ncensor.plot = TRUE,
-             ggtheme = theme_minimal())
-#
-ggsurv$plot <- ggsurv$plot + theme(legend.position = 'none')
-ggsurv$ncensor.plot <- ggpar(ggsurv$ncensor.plot, font.y = c(0, "bold.italic", "darkgreen"))
-ggsurv$table <- ggpar(ggsurv$table, font.y = c(0, "bold.italic", "darkgreen"))
-ggsurv
-```
-
-```{r test.clinical.variables, fig.height=15, echo=FALSE, eval=FALSE}
-# Test physiological Variables
-
-# *note:* Plots with p-value `<= 0.05` are shown. Two types of p-values are used as criteria:
-
-# 1. Univariate cox model
-# 1. Log rank test when separating between high and low risk group
-
-all.plots <- run.cache(test.all.clinical, clinical, ydata, cache.prefix = 'allplots')
-
-multiplot(plotlist = all.plots$plot.list, layout = all.plots$layout)
-knitr::kable(dplyr::arrange(dplyr::select(all.plots$df, name, p.value, desc), p.value))
 ```
 
 ## Preparing degree vector
@@ -446,7 +471,8 @@ ggplot(transf.d) +
 # Model Inference
 
 ```{r list_init, include=FALSE}
-calc.params <- params[c('subset', 'train', 'calc.params.old', 'seed', 'target.vars')]
+calc.params <- params[c('subset', 'train', 'calc.params.old', 'seed', 
+                        'target.vars', 'balanced.sets')]
 model.results <- run.cache(call.results,
                            xdata,
                            ydata,
@@ -456,7 +482,8 @@ model.results <- run.cache(call.results,
                            calc.params,
                            no.plot = TRUE,
                            no.models = TRUE,
-                           cache.digest = list(xdata.digest.cache, ydata.digest.cache),
+                           cache.digest = list(xdata.digest.cache, 
+                                               ydata.digest.cache),
                            cache.prefix = 'big-diff')
 #
 xdata.ix      <- model.results$xdata.ix
@@ -545,14 +572,18 @@ my.km.train <- list()
 my.km.test <- list()
 ix <- 1
 for (ix.name in names(model.results$coefs)) {
+  nvars <- sum(0 != model.results$coefs[[ix.name]])
+  
   ix.alpha <- prettify.labels(ix.name, 'alpha') %>% as.double
   
   my.km.train[[ix]] <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), 
                                       xdata.train[, xdata.ix],  ydata.train, 
-                                      plot.title = 'Train set')$plot + km.name('Train', ix.alpha, ix.name)
+                                      plot.title = 'Train set')$plot + 
+    km.name('Train', ix.alpha, ix.name, nvars)
   my.km.test[[ix]]  <- my.draw.kaplan(list(ix.name = coefs[[ix.name]]), 
                                       xdata.test[, xdata.ix], ydata.test, 
-                                      plot.title = 'Test set')$plot + km.name('Test', ix.alpha, ix.name)
+                                      plot.title = 'Test set')$plot + 
+    km.name('Test', ix.alpha, ix.name, nvars)
   ix <- ix + 1
 }
 
@@ -721,80 +752,22 @@ if (params$train >= 1) {
   big.df <- data.frame()
 } else {
   suppressWarnings(rm(xdata.train, xdata.test, ydata.train, ydata.test))
-  set.seed(params$seed)
-  seed.vec <- sample(1000 + (max(c(1:1e7,params$ntimes))))[1:params$ntimes]
   
-  ntimes.results <- parallel::mclapply(seed.vec, function(seed) {
-    calc.params      <- params[c('alpha', 'subset', 'train', 'calc.params.old', 'target.vars')]
-    calc.params$seed <- seed
-    #
-    flog.info(sprintf('Resampling with seed: %d (%d)', seed, which(seed == seed.vec)))
-    my.output <- capture.output(ret.val <- run.cache(call.results,
-                     xdata, ydata, 
-                     penalty.factor.degree.new, 
-                     penalty.factor.degree.old, 
-                     penalty.factor.orphan,
-                     calc.params,
-                     no.models = TRUE,
-                     no.plot = TRUE,
-                     #
-                     cache.digest = list(xdata.digest.cache, ydata.digest.cache),
-                     cache.prefix = 'big-diff',
-                     show.message = TRUE))
-    
-    flog.info(sprintf('Finish with seed: %d (%d)', seed, which(seed == seed.vec)), my.output, capture = TRUE)
-    flog.info('------------------------ end of iteration')
-    # Reduce memory footprint
-    ret.val$result <- NULL
-    ret.val$models <- NULL
-    for (ix.coef.names in names(ret.val$coefs)) {
-     names(ret.val$coefs[[ix.coef.names]]) <- NULL
-    }
-    return(ret.val)
-  #}, mc.cores = 1, mc.allow.recursive = FALSE)
-  }, mc.cores = min(params$n.cores), mc.allow.recursive = FALSE, mc.preschedule = FALSE)
+  multiple.runs <- run.cache(build.multiple.runs,
+                             params, xdata, ydata,
+                             penalty.factor.degree.new, 
+                             penalty.factor.degree.old, 
+                             penalty.factor.orphan,
+                             xdata.digest.cache,
+                             ydata.digest.cache,
+                             #
+                             cache.prefix = 'multiple.runs')
   
-  #if (params$ntimes == 1) {
-  #  ntimes.results <- list(ntimes.results)
-  #}
-  
-  big.df  <- data.frame()
-  rank.df <- tibble()
-  for (ix in seq_along(ntimes.results)) {
-    el <- ntimes.results[[ix]]$metrics
-    for (ix.el in names(el)) {
-      my.values <- sapply(names(el[[ix.el]]), function(ix.model) {el[[ix.el]][[ix.model]]})
-      my.names  <- rep(ix.el, length(my.values))
-      my.models <- names(el[[ix.el]])
-      new.line  <- data.frame(metric = my.names, model = my.models, values = as.numeric(my.values), stringsAsFactors = FALSE)
-      big.df    <- rbind(big.df, new.line)
-      
-      #
-      sorted.ix <- sort(my.values)
-      base.models <- prettify.labels(my.models, 'string.base')
-      
-      for(base.ix in unique(base.models)) {
-        ixs <- which(base.models == base.ix)
-        my.rank <- my.models[ixs][sort(my.values[ixs], index.return = TRUE)$ix]
-        order.fun <- if (grepl('c.index', my.names[1])) {
-          function(vec) { rev(vec) }
-        } else {
-          function(vec) { vec }
-        }
-        my.rank <- order.fun(my.rank)
-        new.el <- c(list(my.names[1], base.ix), prettify.labels(my.rank, 'model'))
-        names(new.el) <- c('type', 'base.model', paste0('X', seq_len(length(new.el) - 2)))
-        rank.df <- rbind(rank.df, as.tibble(new.el))
-      }
-      
-    }
-  }
-  #big.df$model <- factor(big.df$model, levels = c('glmnet', 'degree', 'orphan'), labels = c('GLMNET', 'DegreeCox', 'OrphanCox'))
-  big.df$metric <- factor(big.df$metric, levels = c('c.index.train', 'c.index.test', 'km.train', 'km.test'), 
-                                                    labels = c('C-Index (Train set)', 'C-Index (Test set)', 'Log-rank (Train set)', 'Log-rank (Test set)'))
-  
-  rank.df$type <- factor(rank.df$type, levels = c('c.index.train', 'c.index.test', 'km.train', 'km.test'), 
-                                                    labels = c('C-Index (Train set)', 'C-Index (Test set)', 'Log-rank (Train set)', 'Log-rank (Test set)'))
+  ntimes.results <- multiple.runs$ntimes.results
+  big.df         <- multiple.runs$big.df
+  rank.df        <- multiple.runs$rank.df
+  values.df      <- multiple.runs$values.df
+  rm(multiple.runs)
 }
 ```
 
@@ -802,37 +775,106 @@ if (params$train >= 1) {
 
 ### Test set
 
-```{r c.index.iter, echo=FALSE, fig.height=12}
+```{r c.index.iter.dist, echo=FALSE, fig.height=10}
 if (nrow(big.df) > 0) {
-  as.tbl(big.df) %>%
-    mutate(model.str = prettify.labels(model, 'string.short')) %>%
-    mutate(model.name = prettify.labels(model, 'model')) %>%
+  big.df %>%
+    mutate(base.model = prettify.labels(model, 'string.base'),
+           string.model = prettify.labels(model, 'string.short'),
+           model.name = prettify.labels(model, 'model')) %>%
+    #filter(model %in% c('glmnet.classic.cv.28', 'degree_new.classic.cv.28', 'orphan.classic.cv.28')) %>%
     filter(metric %in% c('C-Index (Test set)')) %>%
-    filter(values >= 0) %>%
     ggplot() +
-      #geom_freqpoly(aes(values, color = model), alpha = .75, bins = 100) +
-      stat_density(aes(values, fill = model.str), alpha = .75, adjust = 1/5) + 
-      facet_wrap(model.str ~ metric, ncol = 3) +
-      theme_minimal() + theme(legend.position = 'none') +
-      ggtitle('C-Index for Test set')
+      #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
+      #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
+      geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
+      facet_wrap( ~ base.model, ncol = 1) +
+      ggtitle('Full distribution C-Index (Test set)') +
+      theme_minimal() + theme(legend.position = 'bottom')
 }
 ```
 
 #### Rank
 
+Elastic Net vs Hub
+
+```{r en_hub, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  filter.by <- 'C-Index (Test set)'
+  types     <- c('Elastic Net', 'Hub')
+  values.df %>% 
+    filter(type == filter.by) %>% {
+      lims <- c(min(.[types]),
+                max(.[types]))
+      ggplot(.) + 
+        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                   alpha = .3) +
+        expand_limits(x = lims, y = lims) + 
+        facet_wrap( ~ base.model, ncol = 1) + 
+        theme(legend.position = 'none') + 
+        coord_equal()
+    }
+}
+```
+
+Elastic Net vs. Orphan
+
+```{r en_orphan, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  filter.by <- 'C-Index (Test set)'
+  types     <- c('Elastic Net', 'Orphan')
+  values.df %>% 
+    filter(type == filter.by) %>% {
+      lims <- c(min(.[types]),
+                max(.[types]))
+      ggplot(.) + 
+        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                   alpha = .3) +
+        expand_limits(x = lims, y = lims) + 
+        facet_wrap( ~ base.model, ncol = 1) + 
+        theme(legend.position = 'none') + 
+        coord_equal()
+    }
+}
+```
+
+Hub vs. Orphan
+
+```{r hub_orphan, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  filter.by <- 'C-Index (Test set)'
+  types     <- c('Orphan', 'Hub')
+  values.df %>% 
+    filter(type == filter.by) %>% {
+      lims <- c(min(.[types]),
+                max(.[types]))
+      ggplot(.) + 
+        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                   alpha = .3) +
+        expand_limits(x = lims, y = lims) + 
+        facet_wrap( ~ base.model, ncol = 1) + 
+        theme(legend.position = 'none') + 
+        coord_equal()
+    }
+}
+```
+
+
+
 ```{r rank.c.index.test, warning=FALSE}
-filter.by <- 'C-Index (Test set)'
-rank.df %>% 
-  filter(type == filter.by) %>%
-  dplyr::select(base.model, X1, X2, X3) %>%
-  reshape2::melt(id.vars = 'base.model') %>%
-  { 
-    ggplot(.) + 
-      geom_histogram(aes(value, fill = variable), stat = 'count') +
-      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
-      theme(legend.position = 'right') +
-      facet_wrap( ~ base.model, ncol = 1)
-  }
+if (nrow(big.df) > 0) {
+  filter.by <- 'C-Index (Test set)'
+  rank.df %>% 
+    filter(type == filter.by) %>%
+    dplyr::select(base.model, X1, X2, X3) %>%
+    reshape2::melt(id.vars = 'base.model') %>%
+    { 
+      ggplot(.) + 
+        geom_histogram(aes(value, fill = variable), stat = 'count') +
+        ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+        theme(legend.position = 'right') +
+        facet_wrap( ~ base.model, ncol = 1)
+    }
+}
 ```
 
 
@@ -840,34 +882,38 @@ rank.df %>%
 
 ```{r c.iter.train, echo=FALSE, fig.height=20}
 if (nrow(big.df) > 0) {
-  as.tbl(big.df) %>%
-    mutate(model = prettify.labels(model, 'string.short')) %>%
+  big.df %>%
+    mutate(base.model = prettify.labels(model, 'string.base'),
+           string.model = prettify.labels(model, 'string.short'),
+           model.name = prettify.labels(model, 'model')) %>%
     filter(metric %in% c('C-Index (Train set)')) %>%
-    filter(values >= 0) %>%
     ggplot() +
-      #geom_freqpoly(aes(values, color = model), alpha = .75, bins = 100) + 
-      stat_density(aes(values, fill = model), alpha = .75, adjust = 1/5) + 
-      facet_wrap(model ~ metric, ncol = 3) +
-      theme_minimal() + theme(legend.position = 'none') +
-      ggtitle('C-index for Train set')
+      #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
+      #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
+      geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
+      facet_wrap( ~ base.model, ncol = 1) +
+      ggtitle('Full distribution C-Index (Train set)') +
+      theme_minimal() + theme(legend.position = 'bottom')
 }
 ```
 
 #### Rank
 
 ```{r rank.c.index.train, warning=FALSE}
-filter.by <- 'C-Index (Train set)'
-rank.df %>% 
-  filter(type == filter.by) %>%
-  dplyr::select(base.model, X1, X2, X3) %>%
-  reshape2::melt(id.vars = 'base.model') %>%
-  { 
-    ggplot(.) + 
-      geom_histogram(aes(value, fill = variable), stat = 'count') +
-      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
-      theme(legend.position = 'right') +
-      facet_wrap( ~ base.model, ncol = 1)
-  }
+if (nrow(big.df) > 0) {
+  filter.by <- 'C-Index (Train set)'
+  rank.df %>% 
+    filter(type == filter.by) %>%
+    dplyr::select(base.model, X1, X2, X3) %>%
+    reshape2::melt(id.vars = 'base.model') %>%
+    { 
+      ggplot(.) + 
+        geom_histogram(aes(value, fill = variable), stat = 'count') +
+        ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+        theme(legend.position = 'right') +
+        facet_wrap( ~ base.model, ncol = 1)
+    }
+}
 ```
 
 ## Log-rank test on Kaplan-Meier models
@@ -880,7 +926,6 @@ if (nrow(big.df) > 0) {
     mutate(base.model = prettify.labels(model, 'string.base'),
            string.model = prettify.labels(model, 'string.short'),
            model.name = prettify.labels(model, 'model')) %>%
-    #filter(model %in% c('glmnet.classic.cv.28', 'degree_new.classic.cv.28', 'orphan.classic.cv.28')) %>%
     filter(metric %in% c('Log-rank (Test set)')) %>%
     ggplot() +
       geom_vline(xintercept = .05, linetype = 2,  alpha = .2) +
@@ -894,21 +939,102 @@ if (nrow(big.df) > 0) {
 }
 ```
 
+```{r ecdf, echo=FALSE, fig.height=10}
+big.df %>%
+    mutate(base.model = prettify.labels(model, 'string.base'),
+           string.model = prettify.labels(model, 'string.short'),
+           model.name = prettify.labels(model, 'model')) %>%
+    filter(metric %in% c('Log-rank (Test set)')) %>%
+    ggplot() +
+      geom_vline(xintercept = .05, linetype = 2,  alpha = .2) +
+      annotate("text", x = 0.05, y = Inf, label = ' 0.05', alpha = .2, hjust = 0, vjust = 2) +
+      stat_ecdf(aes(values, color = model.name)) + 
+      facet_wrap( ~ base.model, ncol = 1) +
+      ggtitle('Cumulative distribution Log-rank') +
+      theme_minimal() + theme(legend.position = 'bottom')
+```
+
+
 #### Rank
 
+Elastic Net vs Hub
+
+```{r en_hub_logrank, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  filter.by <- 'Log-rank (Test set)'
+  types     <- c('Elastic Net', 'Hub')
+  values.df %>% 
+    filter(type == filter.by) %>% {
+      lims <- c(min(.[types]),
+                max(.[types]))
+      ggplot(.) + 
+        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                   alpha = .3) +
+        expand_limits(x = lims, y = lims) + 
+        facet_wrap( ~ base.model, ncol = 1) + 
+        theme(legend.position = 'none') + 
+        coord_equal()
+    }
+}
+```
+
+Elastic Net vs. Orphan
+
+```{r en_orphan_logrank, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  filter.by <- 'Log-rank (Test set)'
+  types     <- c('Elastic Net', 'Orphan')
+  values.df %>% 
+    filter(type == filter.by) %>% {
+      lims <- c(min(.[types]),
+                max(.[types]))
+      ggplot(.) + 
+        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                   alpha = .3) +
+        expand_limits(x = lims, y = lims) + 
+        facet_wrap( ~ base.model, ncol = 1) + 
+        theme(legend.position = 'none') + 
+        coord_equal()
+    }
+}
+```
+
+Hub vs. Orphan
+
+```{r hub_orphan_logrank, echo=FALSE, fig.height=12}
+if (nrow(big.df) > 0) {
+  filter.by <- 'Log-rank (Test set)'
+  types     <- c('Orphan', 'Hub')
+  values.df %>% 
+    filter(type == filter.by) %>% {
+      lims <- c(min(.[types]),
+                max(.[types]))
+      ggplot(.) + 
+        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                   alpha = .3) +
+        expand_limits(x = lims, y = lims) + 
+        facet_wrap( ~ base.model, ncol = 1) + 
+        theme(legend.position = 'none') + 
+        coord_equal()
+    }
+}
+```
+
 ```{r rank.log.rank.train, warning=FALSE}
-filter.by <- 'Log-rank (Test set)'
-rank.df %>% 
-  filter(type == filter.by) %>%
-  dplyr::select(base.model, X1, X2, X3) %>%
-  reshape2::melt(id.vars = 'base.model') %>%
-  { 
-    ggplot(.) + 
-      geom_histogram(aes(value, fill = variable), stat = 'count') +
-      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
-      theme(legend.position = 'right') +
-      facet_wrap( ~ base.model, ncol = 1)
-  }
+if (nrow(big.df) > 0) {
+  filter.by <- 'Log-rank (Test set)'
+  rank.df %>% 
+    filter(type == filter.by) %>%
+    dplyr::select(base.model, X1, X2, X3) %>%
+    reshape2::melt(id.vars = 'base.model') %>%
+    { 
+      ggplot(.) + 
+        geom_histogram(aes(value, fill = variable), stat = 'count') +
+        ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+        theme(legend.position = 'right') +
+        facet_wrap( ~ base.model, ncol = 1)
+    }
+}
 ```
 
 ```{r determine.consensus}

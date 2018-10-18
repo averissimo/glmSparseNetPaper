@@ -74,7 +74,7 @@ test.all.clinical <- function(clinical, ydata) {
       my.coef        <- coef(test.me.model)
       names(my.coef) <- 'test.me'
       ydata.me       <- data.frame(time = ydata[names(test.me),1], status = ydata[names(test.me),2] * 1)
-      test.me.km     <- glmSparseNet::separate2groups.cox(as.vector(my.coef), as.vector(test.me), ydata.me, plot.title = ix.name, legend.outside = F)
+      test.me.km     <- glmSparseNet::separate2GroupsCox(as.vector(my.coef), as.vector(test.me), ydata.me, plot.title = ix.name, legend.outside = F)
       # build list to multiplot
       #  but skip if not significant
       if (p.value > 0.05 && test.me.km$pvalue > 0.05) { next }

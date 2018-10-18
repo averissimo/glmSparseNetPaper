@@ -23,6 +23,7 @@ params:
   project: 'skcm.data.2018.09.11' # skcm prad brca
   tissue: 'metastatic' # primary.solid.tumor metastatic solid.tissue.normal
   coding.genes: !r TRUE
+  subtract.surv.column: !r NULL
   degree.unweighted: !r TRUE
   degree.correlation: 'pearson'
   degree.cutoff: !r 0
@@ -88,12 +89,12 @@ theme_set(theme_minimal())
 ```{r, results='asis', echo=FALSE}
 cat("```\n")
 cat("# Number of resampling folds: ", params$seed.additional, '\n', sep = '')
-cat('prepare.tcga.survival.data.old(\'', params$project, '\',\n', sep = '')
-cat('                               \'', params$tissue, '\',\n', sep = '')
-cat('                                normalization      = \'', params$normalize, '\',\n', sep = '')
-cat('                                log2.pre.normalize = ', params$log2, ',\n', sep = '')
-cat('                                handle.duplicates  = \'', params$handle.duplicates, '\',\n', sep = '')
-cat('                                coding.genes       = ', params$coding.genes, ')\n', sep = '')
+cat('prepare.tcga.survival.data(\'', params$project, '\',\n', sep = '')
+cat('                           \'', params$tissue, '\',\n', sep = '')
+cat('                            normalization      = \'', params$normalize, '\',\n', sep = '')
+cat('                            log2.pre.normalize = ', params$log2, ',\n', sep = '')
+cat('                            handle.duplicates  = \'', params$handle.duplicates, '\',\n', sep = '')
+cat('                            coding.genes       = ', params$coding.genes, ')\n', sep = '')
 cat("```\n")
 ```
 
@@ -108,9 +109,10 @@ my.data <- run.cache(prepare.tcga.survival.data,
                      #
                      handle.duplicates         = params$handle.duplicates, 
                      coding.genes              = params$coding.genes,
-                     #subtract.suv.column       = 'days_to_submitted_specimen_dx',
+                     subtract.surv.column      = params$subtract.surv.column,
                      cache.prefix              = 'tcga-data.new',
                      show.message = T)
+
 #
 clinical <- my.data$clinical
 #
@@ -162,8 +164,8 @@ if (params$degree.type == 'oldie') {
 } else if (params$degree.type == 'string') {
   #
   # Load degree of STRING network downloaded from external sources
-  degree <- run.cache(string.db.homo.sapiens, cache.prefix = "stringDB") %>% {
-    run.cache(build.string.network, ., use.names = 'ensembl', 
+  degree <- run.cache(stringDBhomoSapiens, cache.prefix = "stringDB") %>% {
+    run.cache(buildStringNetwork, ., use.names = 'ensembl', 
               cache.prefix = 'string-network')
     } %>% {
       .@x[.@x <= params$degree.cutoff] <- 0
@@ -201,7 +203,7 @@ see `?glmSparseNet::heuristic.scale` or `?glmSparseNet::hub.heuristic`
 
 ```{r transformation_function}
 # see ?glmSparseNet::heuristic.scale
-trans.fun <- function(x) { heuristic.scale(x) + 0.2}
+trans.fun <- function(x) { heuristicScale(x) + 0.2}
 ```
 
 
@@ -324,7 +326,7 @@ km.all <- apply(alpha.models[,-2], 1:2, function(ix.name) {
     if (sum(best.coef[best.coef != 0]) == 0) {
       return(NA)
     }
-    return(separate2groups.cox(best.coef, xdata, ydata)$pvalue)
+    return(separate2GroupsCox(best.coef, xdata, ydata)$pvalue)
   }
 })
 

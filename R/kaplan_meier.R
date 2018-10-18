@@ -10,9 +10,10 @@
 #' @examples
 #' km.name('This title', .6)
 #' km.name('This title', 1)
-#' km.name('This title', 0, 'glmnet')
-#' km.name('This title', .7, 'orphan')
-km.name <- function(title, alpha, is.network = NULL) {
+#' km.name('This title', 0, 'glmnet--glmnet--0.20--39')
+#' km.name('This title', 0, 'glmnet--glmnet--0.20--39', 30)
+#' km.name('This title', .7, 'degree_new--orphan--0.20--42')
+km.name <- function(title, alpha, is.network = NULL, nvars = NULL) {
   l1 <- sprintf('%.1f * L1', alpha)
   l2 <- sprintf('%.1f * L2', 1 - alpha)
   sep <- ' + '
@@ -30,6 +31,12 @@ km.name <- function(title, alpha, is.network = NULL) {
     subtitle <- 'Classic Elastic Net model'
     ''
   } else {
+    if (is.null(nvars)) {
+      append.str <- sprintf(' (%s target variables to select)', prettify.labels(is.network, 'target.vars'))
+    }
+    else {
+      append.str <- sprintf(' (%d selected variables with target of %s)', nvars, prettify.labels(is.network, 'target.vars'))
+    }
     is.network <- prettify.labels(is.network, 'model')
     type <- if (is.network == 'Elastic Net') {
       subtitle <- 'Classic Elastic Net model'
@@ -48,6 +55,7 @@ km.name <- function(title, alpha, is.network = NULL) {
       'Promotes low degree with '
     }
   }
+  subtitle <- sprintf('%s%s', subtitle, append.str)
   return(ggplot2::ggtitle(sprintf('%s: %s%s%s%s', title, type, l1, sep, l2), subtitle = subtitle))
 }
 

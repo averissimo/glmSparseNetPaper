@@ -16,10 +16,11 @@ Imports: glmSparseNet,
     loose.rock,
     glmSparseNet,
     survcomp,
+    loose.rock
 Suggests: knitr,
     rmarkdown
 Remotes: averissimo/glmnet.mclapply,
-  averissimo/loose.rock,
-  sysbiomed/glmSparseNet
+  sysbiomed/glmSparseNet,
+  NikNakk/VennDiagram
 VignetteBuilder: knitr
 RoxygenNote: 6.1.0
