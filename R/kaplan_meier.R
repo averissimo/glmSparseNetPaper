@@ -71,6 +71,10 @@ km.name <- function(title, alpha, is.network = NULL, nvars = NULL) {
 #' @return
 #' @export
 my.draw.kaplan <- function(coef.l, xdata, ydata, plot.title = '', no.plot = FALSE) {
+  ydata <- ydata %>% mutate(time = time / 365 * 12)
   return(glmSparseNet::separate2GroupsCox(coef.l, xdata, ydata, no.plot = no.plot,
-                     plot.title = plot.title, legend.outside = F, ylim = c(0,1)))
+                     plot.title = plot.title, legend.outside = F, ylim = c(0,1),
+                     break.x.by = 12,
+                     xlab = "Time in months",
+                     surv.median.line = "hv"))
 }

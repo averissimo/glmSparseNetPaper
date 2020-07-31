@@ -19,23 +19,25 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 params:
 
+  # subtract.surv.column: !r NULL
+
   #
   # Prostate
   # 
   
-  project: 'prad.data.2018.10.11' 
-  tissue: 'primary.solid.tumor'
-  subtract.surv.column: !r NULL # brca
-  target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
+  #project: 'prad.data.2018.10.11' 
+  #tissue: 'primary.solid.tumor'
+  #subtract.surv.column: !r NULL # brca
+  #target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
       
   #
   # Breast Invasive Carcinoma
   # 
   
-  #project: 'brca.data.2018.09.13' 
-  #tissue: 'primary.solid.tumor'
-  #subtract.surv.column: !r NULL # brca
-  #target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
+  project: 'brca.data.2018.09.13' 
+  tissue: 'primary.solid.tumor'
+  subtract.surv.column: !r NULL # brca
+  target.vars: !r list(glmnet = list(alpha = .2, vars = 39), hub = list(alpha = .2, vars = 56), orphan = list(alpha = .2, vars = 42))  
   
   #
   # Skin Melanoma
@@ -45,6 +47,15 @@ params:
   #tissue: 'metastatic'
   #subtract.surv.column: 'days_to_submitted_specimen_dx' # metastatic
   #target.vars: !r list(glmnet = list(alpha = .1, vars = 116), hub = list(alpha = .1, vars = 41), orphan = list(alpha = .1, vars = 111))
+  
+  #
+  # Luad
+  #
+  
+  #project: 'luad.data.2018.10.17'
+  #tissue: 'primary.solid.tumor'
+  # subtract.surv.column: 'days_to_submitted_specimen_dx' # metastatic
+  #target.vars: !r list(glmnet = list(alpha = .1, vars = 110), hub = list(alpha = .1, vars = 56), orphan = list(alpha = .1, vars = 97))
   
   #
   # Data
@@ -65,10 +76,10 @@ params:
   # subset of variables to be used (Inf for all)
   subset: !r Inf  # Random subset of variables to use, Inf for no subsetting
   train: !r .8    # train percentage
-  ntimes: !r 100  # number of times that training set is tested
+  ntimes: !r 5000  # number of times that training set is tested
   #
   seed: !r 1985   # seed being used throughout the cde
-  balanced.sets: !r FALSE
+  balanced.sets: !r TRUE
   n.cores: !r 14  # number of cores to use in parallel-friendly chunks
   #
   calc.params.old: !r FALSE # calculate 1/degreee penalty
@@ -81,7 +92,7 @@ params:
 * *TCGA project*: **`r params$project`**
 * *Tissue type*: **`r params$tissue`**
     * `r if(params$coding.genes) {'Only using coding genes'} else {'Using all genes (coding and non-coding)'}`
-* *Subtract survival time*: **`r if(!is.null(params$subtract.surv.column) {params$subtract.surv.column} else { 'Using survival time from diagnostics' }`**
+* *Subtract survival time*: **`r if(!is.null(params$subtract.surv.column)){params$subtract.surv.column} else{'Using survival time from diagnostics'}`**
 * *Degree calculation*: **`r params$degree.type`**
 
 **Normalization**
@@ -103,17 +114,6 @@ params:
 cor/cov method: `r params$degree.correlation` 
 
   * *only applies if network type is correlation/covariance*
-
-```{r, include=FALSE, eval=FALSE}
-rmarkdown::render('Analysis.Rmd', output_file = 'brca-center.html', params = list(normalization = 'center'), output_format = BiocStyle::html_document())
-rmarkdown::render('Analysis.Rmd', output_file = 'brca-max.html', params = list(normalization = 'max'), output_format = BiocStyle::html_document())
-
-rmarkdown::render('Analysis.Rmd', output_file = 'skcm-center.html', 
-                  params = list(normalization = 'center', project = 'skcm', tissue = 'metastatic'), output_format = BiocStyle::html_document())
-rmarkdown::render('Analysis.Rmd', output_file = 'skcm-max.html', 
-                  params = list(normalization = 'max', project = 'skcm', tissue = 'metastatic'), output_format = BiocStyle::html_document())
-```
-
 
 ```{r setup, include=FALSE}
 # ComBat(matrix and category_id)
@@ -137,7 +137,6 @@ library(Vennerable)
 library(limma)
 library(tidyverse)
 library(forcats)
-library(survival.owl)
 library(biclust)
 #
 library(glmSparseNet)
@@ -203,7 +202,7 @@ my.data <- run.cache(prepare.tcga.survival.data,
                      coding.genes              = TRUE,
                      subtract.surv.column      = params$subtract.surv.column,
                      cache.prefix              = 'tcga-data.new',
-                     show.message = T)
+                     show.message = TRUE)
 #
 clinical <- my.data$clinical
 #
@@ -222,7 +221,7 @@ rm(my.data)
 ### Summary of data
 
 ```{r summary_data, echo=FALSE}
-flog.info('Loaded data from %s TCGA', params$project)
+flog.info('       Loaded data from TCGA: %s', params$project)
 flog.info('              type of tissue: %s', params$tissue)
 flog.info('  observations (individuals): %d (%d event / %d censored)', nrow(xdata), sum(ydata$status), sum(!ydata$status))
 flog.info('           variables (genes): %d', ncol(xdata))
@@ -230,7 +229,7 @@ flog.info('           variables (genes): %d', ncol(xdata))
 
 ### Survival curve
 
-```{r survival_curves, fig.height=10}
+```{r survival_curves, fig.height=10, echo=FALSE}
 ggsurv <- survfit(Surv(time, status) ~ 1, data = ydata %>% mutate(time = time/365*12)) %>% 
   ggsurvplot(data = ydata,
              conf.int = FALSE,
@@ -249,7 +248,7 @@ ggsurv$table <- ggpar(ggsurv$table, font.y = c(0, "bold.italic", "darkgreen"))
 ggsurv
 ```
 
-```{r test.clinical.variables, fig.height=15, echo=FALSE, eval=FALSE}
+```{r test.clinical.variables, fig.height=8, echo=FALSE, eval=FALSE}
 # Test physiological Variables
 
 # *note:* Plots with p-value `<= 0.05` are shown. Two types of p-values are used as criteria:
@@ -402,15 +401,27 @@ my.df <- data.frame(ix                        = seq_along(penalty.factor.degree.
                     original                  = original.penalty.factor)
 ```
 
+```{r}
+top4000 <- data.frame(ensembl_gene_id = names(original.penalty.factor), degree = original.penalty.factor, stringsAsFactors = FALSE) %>%
+  arrange(desc(degree)) %>%
+  filter(degree > 4000)
+
+top4000.names <- geneNames(top4000$ensembl_gene_id)
+
+top4000 %>% 
+  inner_join(top4000.names)
+```
+
+
 ### Original degree frequency
 
 ```{r plots_x_no_scale, echo=FALSE, fig.height=10, warning=FALSE}
-transf.d <- melt.data.frame(my.df[,c('ix', 
-                                     'original', 
-                                     'penalty.factor.degree.old',
-                                     'penalty.factor.degree.log',
-                                     'penalty.factor.degree.new',
-                                     'penalty.factor.orphan')], id.vars = c('ix'), variable_name = 'Type')
+transf.d <- reshape2::melt(my.df[,c('ix', 
+                 'original', 
+                 'penalty.factor.degree.old',
+                 'penalty.factor.degree.log',
+                 'penalty.factor.degree.new',
+                 'penalty.factor.orphan')] %>% as_tibble, id.vars = c('ix'), variable.name = 'Type')
 
 levels(transf.d$Type) <- levels(transf.d$Type) %>%
   gsub('original', 'Original', .) %>%
@@ -437,12 +448,12 @@ ggplot(transf.d) +
 ```
 
 ```{r plots_x_scale, echo=FALSE, fig.height=10, warning=FALSE}
-transf.d <- melt.data.frame(my.df[,c('ix', 
+transf.d <- reshape2::melt(my.df[,c('ix', 
                                      'original', 
                                      'penalty.factor.degree.old',
                                      'penalty.factor.degree.log',
                                      'penalty.factor.degree.new',
-                                     'penalty.factor.orphan')], id.vars = c('ix'), variable_name = 'Type')
+                                     'penalty.factor.orphan')], id.vars = c('ix'), variable.name = 'Type')
 
 levels(transf.d$Type) <- levels(transf.d$Type) %>%
   gsub('original', 'Original', .) %>%
@@ -536,7 +547,7 @@ flog.info('note, selected variables could be slightly different from target, to 
 
 Calculated using the inferred models and the train/test datasets. *The higher the better*.
 
-```{r risk, fig.height=18, echo=FALSE, warning=FALSE}
+```{r risk, fig.height=10, echo=FALSE, warning=FALSE}
 this.list <- list()
 for (ix.name in names(model.results$coefs)) {
   this.list[[ix.name]] <- list(model = model.results$coefs[[ix.name]], target = lambdas[[ix.name]])
@@ -547,19 +558,19 @@ fit.df <- run.cache(build.fit.df, this.list, xdata.train, xdata.test, xdata.ix,
 
 for(ix in c('Train', 'Test')) {
   print(
-    fit.df %>%
-      mutate(type.str = prettify.labels(type)) %>%
-      mutate(type.model = prettify.labels(type, ret.value = 'model')) %>%
+    fit.df %>% as.tibble() %>%
+      mutate(type.str = prettify.labels(type),
+             type.model = prettify.labels(type, ret.value = 'model'),
+             type.base  = prettify.labels(type, 'string.base')) %>%
       filter(set == ix) %>%
       ggplot() +
-        #geom_freqpoly(aes(relative.risk, color = set), bins = 150) +
-        stat_density(aes(relative.risk, fill = type.model), adjust = 1/5) + 
+        geom_density(aes(relative.risk, color = type.model, fill = type.model), alpha = .1, adjust = 1/5) + 
         theme_minimal() +
         geom_vline(aes(xintercept = mean), linetype = 'dotted', color = '#999999') +
         geom_text(aes(x = mean, y = -.5, label = sprintf(' Mean of relative risk %g', mean), hjust = 0), color = '#999999', inherit.aes = FALSE, check_overlap = TRUE) + 
-        facet_wrap( ~ type.str + set, ncol = 3) + 
+        facet_wrap( ~ type.base + set, ncol = 1) + 
         ggtitle('Distribution of risk in Classic model') +
-        theme(legend.position = 'none') +
+        #theme(legend.position = 'none') +
         xlim(0, 5)
   )
 }
@@ -567,7 +578,7 @@ for(ix in c('Train', 'Test')) {
 
 ## Kaplan-Meier Curves
 
-```{r plot.km, echo=FALSE, fig.height=30}
+```{r plot.km, echo=FALSE, fig.height=8, warning=FALSE, message=FALSE}
 my.km.train <- list()
 my.km.test <- list()
 ix <- 1
@@ -733,11 +744,6 @@ for (ix.name in names(model.results$coefs)) {
       ggplot2::xlab('External Gene Name') + ggplot2::ylab('') +
         ggplot2::scale_fill_gradientn(colours = rev(grDevices::topo.colors(2)))
   )
-  # my.mat <- df.scaled.filter[,-1]
-  # tryCatch({
-  # biclust(as.matrix(my.mat), method=BCBimax(), minr=2, minc=2, number=100) %>%
-  #   drawHeatmap(x = as.matrix(my.mat), bicResult = ., number = 1) # shown in picture below
-  # }, error = function(err) { flog.error('Error: %s', err)})
 }
 ```
 
@@ -747,14 +753,14 @@ for (ix.name in names(model.results$coefs)) {
 if (params$train >= 1) {
   flog.info("Train and test sets are the same, won't calculate %d times with random seeds", params$train)
   big.df <- data.frame()
-} else if (params$ntimes == 1) {
-  flog.info("Running only %d times, so won't calculate any more runs. Result above should suffice", params$ntimes)
-  big.df <- data.frame()
 } else {
   suppressWarnings(rm(xdata.train, xdata.test, ydata.train, ydata.test))
   
-  multiple.runs <- run.cache(build.multiple.runs,
-                             params, xdata, ydata,
+  new.params <- calc.params
+  new.params$ntimes <- max(c(1, params$ntimes))
+  
+  ntimes.results.list <- run.cache(build.multiple.runs,
+                             new.params, xdata, ydata,
                              penalty.factor.degree.new, 
                              penalty.factor.degree.old, 
                              penalty.factor.orphan,
@@ -763,7 +769,13 @@ if (params$train >= 1) {
                              #
                              cache.prefix = 'multiple.runs')
   
-  ntimes.results <- multiple.runs$ntimes.results
+  ntimes.results <- ntimes.results.list$ntimes.results
+  varnames       <- ntimes.results.list$varnames
+  
+  multiple.runs <- run.cache(handle.multiple,
+                               ntimes.results,
+                               cache.prefix = 'handle.multiple')
+  
   big.df         <- multiple.runs$big.df
   rank.df        <- multiple.runs$rank.df
   values.df      <- multiple.runs$values.df
@@ -771,149 +783,164 @@ if (params$train >= 1) {
 }
 ```
 
+`r if(nrow(big.df) == 0) {"<!--"}`
+
 ## C-Index distribution
 
 ### Test set
 
 ```{r c.index.iter.dist, echo=FALSE, fig.height=10}
-if (nrow(big.df) > 0) {
-  big.df %>%
-    mutate(base.model = prettify.labels(model, 'string.base'),
-           string.model = prettify.labels(model, 'string.short'),
-           model.name = prettify.labels(model, 'model')) %>%
-    #filter(model %in% c('glmnet.classic.cv.28', 'degree_new.classic.cv.28', 'orphan.classic.cv.28')) %>%
-    filter(metric %in% c('C-Index (Test set)')) %>%
-    ggplot() +
-      #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
-      #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
-      geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
-      facet_wrap( ~ base.model, ncol = 1) +
-      ggtitle('Full distribution C-Index (Test set)') +
-      theme_minimal() + theme(legend.position = 'bottom')
-}
+big.df %>%
+  mutate(base.model = prettify.labels(model, 'string.base'),
+         string.model = prettify.labels(model, 'string.short'),
+         model.name = prettify.labels(model, 'model')) %>%
+  #filter(model %in% c('glmnet.classic.cv.28', 'degree_new.classic.cv.28', 'orphan.classic.cv.28')) %>%
+  filter(metric %in% c('C-Index (Test set)')) %>%
+  ggplot() +
+    #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
+    #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
+    geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
+    facet_wrap( ~ base.model, ncol = 3) +
+    ggtitle('Full distribution C-Index (Test set)') +
+    theme_minimal() + theme(legend.position = 'bottom')
 ```
 
 #### Rank
 
-Elastic Net vs Hub
+```{r rank.c.index.test, warning=FALSE, echo=FALSE}
+filter.by <- 'C-Index (Test set)'
+rank.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(base.model, X1, X2, X3) %>%
+  reshape2::melt(id.vars = 'base.model') %>%
+  { 
+    ggplot(.) + 
+      geom_histogram(aes(value, fill = variable), stat = 'count') +
+      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+      theme(legend.position = 'right') +
+      facet_wrap( ~ base.model, ncol = 1)
+  }
+```
+
+##### Elastic Net vs Hub
 
 ```{r en_hub, echo=FALSE, fig.height=12}
-if (nrow(big.df) > 0) {
-  filter.by <- 'C-Index (Test set)'
-  types     <- c('Elastic Net', 'Hub')
-  values.df %>% 
-    filter(type == filter.by) %>% {
-      lims <- c(min(.[types]),
-                max(.[types]))
-      ggplot(.) + 
-        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
-                   alpha = .3) +
-        expand_limits(x = lims, y = lims) + 
-        facet_wrap( ~ base.model, ncol = 1) + 
-        theme(legend.position = 'none') + 
-        coord_equal()
-    }
-}
+filter.by <- 'C-Index (Test set)'
+types     <- c('Elastic Net', 'Hub')
+
+values.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(c('base.model', types)) %>%
+  mutate(aa = UQ(as.name(types[1])),
+         bb = UQ(as.name(types[2]))) %>%
+  group_by(base.model) %>%
+  summarise(r.squared = (caret::postResample(pred = aa, obs = bb)['Rsquared'])) %>%
+  knitr::kable()
+
+values.df %>% 
+  filter(type == filter.by) %>% {
+    lims <- c(min(.[types]),
+              max(.[types]))
+    ggplot(.) + 
+      geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                 alpha = .3) +
+      expand_limits(x = lims, y = lims) + 
+      facet_wrap( ~ base.model, ncol = 3) + 
+      theme(legend.position = 'none') + 
+      coord_equal()
+  }
 ```
 
-Elastic Net vs. Orphan
+##### Elastic Net vs. Orphan
 
 ```{r en_orphan, echo=FALSE, fig.height=12}
-if (nrow(big.df) > 0) {
-  filter.by <- 'C-Index (Test set)'
-  types     <- c('Elastic Net', 'Orphan')
-  values.df %>% 
-    filter(type == filter.by) %>% {
-      lims <- c(min(.[types]),
-                max(.[types]))
-      ggplot(.) + 
-        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
-                   alpha = .3) +
-        expand_limits(x = lims, y = lims) + 
-        facet_wrap( ~ base.model, ncol = 1) + 
-        theme(legend.position = 'none') + 
-        coord_equal()
-    }
-}
+filter.by <- 'C-Index (Test set)'
+types     <- c('Elastic Net', 'Orphan')
+
+values.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(c('base.model', types)) %>%
+  mutate(aa = UQ(as.name(types[1])),
+         bb = UQ(as.name(types[2]))) %>%
+  group_by(base.model) %>%
+  summarise(r.squared = (caret::postResample(pred = aa, obs = bb)['Rsquared'])) %>%
+  knitr::kable()
+
+values.df %>% 
+  filter(type == filter.by) %>% {
+    lims <- c(min(.[types]),
+              max(.[types]))
+    ggplot(.) + 
+      geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                 alpha = .3) +
+      expand_limits(x = lims, y = lims) + 
+      facet_wrap( ~ base.model, ncol = 3) + 
+      theme(legend.position = 'none') + 
+      coord_equal()
+  }
 ```
 
-Hub vs. Orphan
+##### Hub vs. Orphan
 
 ```{r hub_orphan, echo=FALSE, fig.height=12}
-if (nrow(big.df) > 0) {
-  filter.by <- 'C-Index (Test set)'
-  types     <- c('Orphan', 'Hub')
-  values.df %>% 
-    filter(type == filter.by) %>% {
-      lims <- c(min(.[types]),
-                max(.[types]))
-      ggplot(.) + 
-        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
-                   alpha = .3) +
-        expand_limits(x = lims, y = lims) + 
-        facet_wrap( ~ base.model, ncol = 1) + 
-        theme(legend.position = 'none') + 
-        coord_equal()
-    }
-}
+filter.by <- 'C-Index (Test set)'
+types     <- c('Orphan', 'Hub')
+
+values.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(c('base.model', types)) %>%
+  mutate(aa = UQ(as.name(types[1])),
+         bb = UQ(as.name(types[2]))) %>%
+  group_by(base.model) %>%
+  summarise(r.squared = (caret::postResample(pred = aa, obs = bb)['Rsquared'])) %>%
+  knitr::kable()
+
+values.df %>% 
+  filter(type == filter.by) %>% {
+    lims <- c(min(.[types]),
+              max(.[types]))
+    ggplot(.) + 
+      geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                 alpha = .3) +
+      expand_limits(x = lims, y = lims) + 
+      facet_wrap( ~ base.model, ncol = 3) + 
+      theme(legend.position = 'none') + 
+      coord_equal()
+  }
 ```
-
-
-
-```{r rank.c.index.test, warning=FALSE}
-if (nrow(big.df) > 0) {
-  filter.by <- 'C-Index (Test set)'
-  rank.df %>% 
-    filter(type == filter.by) %>%
-    dplyr::select(base.model, X1, X2, X3) %>%
-    reshape2::melt(id.vars = 'base.model') %>%
-    { 
-      ggplot(.) + 
-        geom_histogram(aes(value, fill = variable), stat = 'count') +
-        ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
-        theme(legend.position = 'right') +
-        facet_wrap( ~ base.model, ncol = 1)
-    }
-}
-```
-
 
 ### Train set
 
 ```{r c.iter.train, echo=FALSE, fig.height=20}
-if (nrow(big.df) > 0) {
-  big.df %>%
-    mutate(base.model = prettify.labels(model, 'string.base'),
-           string.model = prettify.labels(model, 'string.short'),
-           model.name = prettify.labels(model, 'model')) %>%
-    filter(metric %in% c('C-Index (Train set)')) %>%
-    ggplot() +
-      #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
-      #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
-      geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
-      facet_wrap( ~ base.model, ncol = 1) +
-      ggtitle('Full distribution C-Index (Train set)') +
-      theme_minimal() + theme(legend.position = 'bottom')
-}
+big.df %>%
+  mutate(base.model = prettify.labels(model, 'string.base'),
+         string.model = prettify.labels(model, 'string.short'),
+         model.name = prettify.labels(model, 'model')) %>%
+  filter(metric %in% c('C-Index (Train set)')) %>%
+  ggplot() +
+    #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
+    #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
+    geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
+    facet_wrap( ~ base.model, ncol = 3) +
+    ggtitle('Full distribution C-Index (Train set)') +
+    theme_minimal() + theme(legend.position = 'bottom')
 ```
 
 #### Rank
 
-```{r rank.c.index.train, warning=FALSE}
-if (nrow(big.df) > 0) {
-  filter.by <- 'C-Index (Train set)'
-  rank.df %>% 
-    filter(type == filter.by) %>%
-    dplyr::select(base.model, X1, X2, X3) %>%
-    reshape2::melt(id.vars = 'base.model') %>%
-    { 
-      ggplot(.) + 
-        geom_histogram(aes(value, fill = variable), stat = 'count') +
-        ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
-        theme(legend.position = 'right') +
-        facet_wrap( ~ base.model, ncol = 1)
-    }
-}
+```{r rank.c.index.train, warning=FALSE, echo=FALSE}
+filter.by <- 'C-Index (Train set)'
+rank.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(base.model, X1, X2, X3) %>%
+  reshape2::melt(id.vars = 'base.model') %>%
+  { 
+    ggplot(.) + 
+      geom_histogram(aes(value, fill = variable), stat = 'count') +
+      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+      theme(legend.position = 'right') +
+      facet_wrap( ~ base.model, ncol = 1)
+  }
 ```
 
 ## Log-rank test on Kaplan-Meier models
@@ -921,22 +948,20 @@ if (nrow(big.df) > 0) {
 Distribution of Log-rank test with groups separated by high and low risk groups
 
 ```{r pvalue.itre, echo=FALSE, fig.height=10}
-if (nrow(big.df) > 0) {
-  big.df %>%
-    mutate(base.model = prettify.labels(model, 'string.base'),
-           string.model = prettify.labels(model, 'string.short'),
-           model.name = prettify.labels(model, 'model')) %>%
-    filter(metric %in% c('Log-rank (Test set)')) %>%
-    ggplot() +
-      geom_vline(xintercept = .05, linetype = 2,  alpha = .2) +
-      annotate("text", x = 0.05, y = Inf, label = ' 0.05', alpha = .2, hjust = 0, vjust = 2) +
-      #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
-      #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
-      geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
-      facet_wrap( ~ base.model, ncol = 1) +
-      ggtitle('Full distribution Log-rank') +
-      theme_minimal() + theme(legend.position = 'bottom')
-}
+big.df %>%
+  mutate(base.model = prettify.labels(model, 'string.base'),
+         string.model = prettify.labels(model, 'string.short'),
+         model.name = prettify.labels(model, 'model')) %>%
+  filter(metric %in% c('Log-rank (Test set)')) %>%
+  ggplot() +
+    geom_vline(xintercept = .05, linetype = 2,  alpha = .2) +
+    annotate("text", x = 0.05, y = Inf, label = ' 0.05', alpha = .2, hjust = 0, vjust = 2) +
+    #geom_freqpoly(aes(values, color = model.name), alpha = .75, bins = 100) +
+    #stat_density(aes(values, color = model.name),position="identity",geom="line", adjust = 1/5) +
+    geom_density(aes(values, color = model.name, fill = model.name), alpha = .1, adjust = 1/5) + 
+    facet_wrap( ~ base.model, ncol = 3) +
+    ggtitle('Full distribution Log-rank') +
+    theme_minimal() + theme(legend.position = 'bottom')
 ```
 
 ```{r ecdf, echo=FALSE, fig.height=10}
@@ -957,111 +982,189 @@ big.df %>%
 
 #### Rank
 
-Elastic Net vs Hub
+```{r rank.log.rank.train, warning=FALSE, echo=FALSE}
+filter.by <- 'Log-rank (Test set)'
+rank.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(base.model, X1, X2, X3) %>%
+  reshape2::melt(id.vars = 'base.model') %>%
+  { 
+    ggplot(.) + 
+      geom_histogram(aes(value, fill = variable), stat = 'count') +
+      ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
+      theme(legend.position = 'right') +
+      facet_wrap( ~ base.model, ncol = 1)
+  }
+```
+
+##### Elastic Net vs Hub
 
 ```{r en_hub_logrank, echo=FALSE, fig.height=12}
-if (nrow(big.df) > 0) {
-  filter.by <- 'Log-rank (Test set)'
-  types     <- c('Elastic Net', 'Hub')
-  values.df %>% 
-    filter(type == filter.by) %>% {
-      lims <- c(min(.[types]),
-                max(.[types]))
-      ggplot(.) + 
-        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
-                   alpha = .3) +
-        expand_limits(x = lims, y = lims) + 
-        facet_wrap( ~ base.model, ncol = 1) + 
-        theme(legend.position = 'none') + 
-        coord_equal()
-    }
-}
+filter.by <- 'Log-rank (Test set)'
+types     <- c('Elastic Net', 'Hub')
+
+values.df %>% 
+    filter(type == filter.by) %>%
+    dplyr::select(c('base.model', types)) %>%
+    mutate(aa = UQ(as.name(types[1])),
+           bb = UQ(as.name(types[2]))) %>%
+    group_by(base.model) %>%
+    summarise(r.squared = (caret::postResample(pred = aa, obs = bb)['Rsquared'])) %>%
+    knitr::kable()
+
+values.df %>% 
+  filter(type == filter.by) %>% {
+    lims <- c(min(.[types]),
+              max(.[types]))
+    ggplot(.) + 
+      geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                 alpha = .3) +
+      expand_limits(x = lims, y = lims) + 
+      facet_wrap( ~ base.model, ncol = 3) + 
+      theme(legend.position = 'none') + 
+      coord_equal()
+  }
 ```
 
-Elastic Net vs. Orphan
+##### Elastic Net vs. Orphan
 
 ```{r en_orphan_logrank, echo=FALSE, fig.height=12}
-if (nrow(big.df) > 0) {
-  filter.by <- 'Log-rank (Test set)'
-  types     <- c('Elastic Net', 'Orphan')
-  values.df %>% 
-    filter(type == filter.by) %>% {
-      lims <- c(min(.[types]),
-                max(.[types]))
-      ggplot(.) + 
-        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
-                   alpha = .3) +
-        expand_limits(x = lims, y = lims) + 
-        facet_wrap( ~ base.model, ncol = 1) + 
-        theme(legend.position = 'none') + 
-        coord_equal()
-    }
-}
+filter.by <- 'Log-rank (Test set)'
+types     <- c('Elastic Net', 'Orphan')
+
+values.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(c('base.model', types)) %>%
+  mutate(aa = UQ(as.name(types[1])),
+         bb = UQ(as.name(types[2]))) %>%
+  group_by(base.model) %>%
+  summarise(r.squared = (caret::postResample(pred = aa, obs = bb)['Rsquared'])) %>%
+  knitr::kable()
+
+values.df %>% 
+  filter(type == filter.by) %>% {
+    lims <- c(min(.[types]),
+              max(.[types]))
+    ggplot(.) + 
+      geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                 alpha = .3) +
+      expand_limits(x = lims, y = lims) + 
+      facet_wrap( ~ base.model, ncol = 3) + 
+      theme(legend.position = 'none') + 
+      coord_equal()
+  }
 ```
 
-Hub vs. Orphan
+##### Hub vs. Orphan
 
 ```{r hub_orphan_logrank, echo=FALSE, fig.height=12}
-if (nrow(big.df) > 0) {
-  filter.by <- 'Log-rank (Test set)'
-  types     <- c('Orphan', 'Hub')
-  values.df %>% 
-    filter(type == filter.by) %>% {
-      lims <- c(min(.[types]),
-                max(.[types]))
-      ggplot(.) + 
-        geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
-                   alpha = .3) +
-        expand_limits(x = lims, y = lims) + 
-        facet_wrap( ~ base.model, ncol = 1) + 
-        theme(legend.position = 'none') + 
-        coord_equal()
-    }
-}
-```
+filter.by <- 'Log-rank (Test set)'
+types     <- c('Orphan', 'Hub')
 
-```{r rank.log.rank.train, warning=FALSE}
-if (nrow(big.df) > 0) {
-  filter.by <- 'Log-rank (Test set)'
-  rank.df %>% 
-    filter(type == filter.by) %>%
-    dplyr::select(base.model, X1, X2, X3) %>%
-    reshape2::melt(id.vars = 'base.model') %>%
-    { 
-      ggplot(.) + 
-        geom_histogram(aes(value, fill = variable), stat = 'count') +
-        ggtitle(filter.by, subtitle = 'Ranks for each of models, X1 is best, Xn is the worst') +
-        theme(legend.position = 'right') +
-        facet_wrap( ~ base.model, ncol = 1)
-    }
-}
-```
+values.df %>% 
+  filter(type == filter.by) %>%
+  dplyr::select(c('base.model', types)) %>%
+  mutate(aa = UQ(as.name(types[1])),
+         bb = UQ(as.name(types[2]))) %>%
+  group_by(base.model) %>%
+  summarise(r.squared = (caret::postResample(pred = aa, obs = bb)['Rsquared'])) %>%
+  knitr::kable()
 
-```{r determine.consensus}
-if (nrow(big.df) > 0) {
-  consensus <- list()
-  all.conse <- list()
-  
-  var.names <- as.character(colnames(xdata[,xdata.ix]))
-  
-  for (ix in ntimes.results) {
-   for (ix.2 in names(ix$coefs)) {
-      all.conse[[ix.2]] <- c(all.conse[[ix.2]], (ix$coefs[[ix.2]] %>% { 
-        var.names[. != 0]
-      } ))
-      consensus[[ix.2]] <- unique(c(consensus[[ix.2]], (ix$coefs[[ix.2]] %>% { 
-        var.names[. != 0]
-      } )))
-    }
+values.df %>% 
+  filter(type == filter.by) %>% {
+    lims <- c(min(.[types]),
+              max(.[types]))
+    ggplot(.) + 
+      geom_point(aes_(x = as.name(types[1]), y = as.name(types[2]), color = as.name('base.model')), 
+                 alpha = .3) +
+      expand_limits(x = lims, y = lims) + 
+      facet_wrap( ~ base.model, ncol = 3) + 
+      theme(legend.position = 'none') + 
+      coord_equal()
   }
-  all.conse.tbl <- lapply(all.conse, table)
-  # consensus.external <- lapply(consensus, gene.names)
-}
 ```
+
+## Consesus genes
+
+```{r determine.consensus, echo=FALSE}
+consensus <- list()
+all.conse <- list()
+
+all.conse.pvalue <- list()
+
+var.names <- as.character(colnames(xdata[,xdata.ix]))
+
+for (ix in ntimes.results) {
+  if (is.list(ix)) {
+    for (ix.2 in names(ix$coefs)) {
+      if (ix$metrics$km.test[[ix.2]] < 0.05) {
+        all.conse.pvalue[[ix.2]] <- c(all.conse.pvalue[[ix.2]], (ix$coefs[[ix.2]] %>% { 
+          var.names[as.logical(. != 0)]
+        } ))  
+      }
+     
+      all.conse[[ix.2]] <- c(all.conse[[ix.2]], (ix$coefs[[ix.2]] %>% { 
+        var.names[as.logical(. != 0)]
+      } ))
+    } 
+  }
+}
+all.conse.tbl        <- lapply(all.conse, table)
+all.conse.pvalue.tbl <- lapply(all.conse.pvalue, table)
+```
+
+### Selected genes over all runs
+
+#### Bar plots of frequencies
 
 ```{r consensus.count, echo=FALSE, fig.height=10, fig.width=10}
-if (nrow(big.df) > 0) {
-  melt(all.conse.tbl) %>%
+melt(all.conse.tbl) %>%
+  mutate(L1.suffix = factor(prettify.labels(L1, 'string.base')),
+         L1.prefix = factor(prettify.labels(L1, 'model'))) %>%
+  mutate(L1 = factor(L1)) %>%
+  group_by(L1.suffix) %>%
+  add_count(Var.1) %>%
+  filter(n > 1) %>%
+  ggplot() +
+  geom_col(aes(Var.1, value, color = L1.prefix, fill = L1.prefix), alpha = .4) +
+  facet_wrap( ~ L1.suffix, ncol = 3) +
+  scale_x_discrete(breaks = c()) +
+  scale_fill_discrete('Model') + scale_color_discrete('Model') +
+  theme(legend.position = 'top', axis.text.x = element_blank()) +
+  xlab('Genes') + ylab('Number of times gene is selected (stacked)')
+```
+
+#### Overlap between variables selected
+
+```{r consensus.venn, warning=FALSE, echo=FALSE, fig.width=8, fig.height=7}
+all.names  <- names(model.results$coefs)
+all.names  <- all.names[grep('^(degree_new--)|^(orphan--)|^(glmnet--)', all.names)]
+all.model  <- unique(gsub('^([a-zAZ]+)--(.+)$', '\\1', gsub('_new', '', all.names)))
+all.origin <- gsub('^([a-zAZ]+)--(.+)$', '\\2', gsub('_new', '', all.names))
+
+for (type in unique(all.origin)) {
+  ll <- list()
+  for (ix.name in all.names[which(grepl(type, all.names))]) {
+    label <- sprintf('%s (%d)', prettify.labels(ix.name, 'model'), length(all.conse.tbl[[ix.name]]))
+    ll[[label]] <- sort(names(all.conse.tbl[[ix.name]]))
+  }
+  tryCatch({
+    draw.3venn(ll, prettify.labels(type, 'string.base'))
+    }, error = function(err) { flog.error('Probel with %s', err)})
+}
+```
+
+### Selected genes in significant runs
+
+i.e. with `pvalue < 0.05` in Log-rank test using the test set.
+
+Bar plots of frequencies
+
+```{r consensus.count.pvalue, echo=FALSE, fig.height=10, fig.width=10}
+if(length(all.conse.pvalue.tbl) == 0) {
+  flog.warn('None of the models was statistical significant.')
+} else {
+  melt(all.conse.pvalue.tbl) %>%
     mutate(L1.suffix = factor(prettify.labels(L1, 'string.base')),
            L1.prefix = factor(prettify.labels(L1, 'model'))) %>%
     mutate(L1 = factor(L1)) %>%
@@ -1070,7 +1173,7 @@ if (nrow(big.df) > 0) {
     filter(n > 1) %>%
     ggplot() +
     geom_col(aes(Var.1, value, color = L1.prefix, fill = L1.prefix), alpha = .4) +
-    facet_wrap( ~ L1.suffix, ncol = 1) +
+    facet_wrap( ~ L1.suffix, ncol = 3) +
     scale_x_discrete(breaks = c()) +
     scale_fill_discrete('Model') + scale_color_discrete('Model') +
     theme(legend.position = 'top', axis.text.x = element_blank()) +
@@ -1078,11 +1181,12 @@ if (nrow(big.df) > 0) {
 }
 ```
 
+Overlap between variables selected
 
-## Overlap between variables selected
-
-```{r consensus.venn, warning=FALSE, echo=FALSE, fig.width=8, fig.height=7}
-if (nrow(big.df) > 0) {
+```{r consensus.venn.pvalue, warning=FALSE, echo=FALSE, fig.width=8, fig.height=7}
+if(length(all.conse.pvalue.tbl) == 0) {
+  flog.warn('None of the models was statistical significant.')
+} else {
   all.names  <- names(model.results$coefs)
   all.names  <- all.names[grep('^(degree_new--)|^(orphan--)|^(glmnet--)', all.names)]
   all.model  <- unique(gsub('^([a-zAZ]+)--(.+)$', '\\1', gsub('_new', '', all.names)))
@@ -1091,28 +1195,98 @@ if (nrow(big.df) > 0) {
   for (type in unique(all.origin)) {
     ll <- list()
     for (ix.name in all.names[which(grepl(type, all.names))]) {
-      label <- sprintf('%s (%d)', prettify.labels(ix.name, 'model'), length(all.conse.tbl[[ix.name]]))
-      ll[[label]] <- sort(names(all.conse.tbl[[ix.name]]))
+      label <- sprintf('%s (%d)', prettify.labels(ix.name, 'model'), length(all.conse.pvalue.tbl[[ix.name]]))
+      ll[[label]] <- sort(names(all.conse.pvalue.tbl[[ix.name]]))
     }
     tryCatch({
       draw.3venn(ll, prettify.labels(type, 'string.base'))
-      #vv <- Venn(ll)
-      #gridExtra::grid.arrange(grid::grid.grabExpr(plot(vv, doWeights = TRUE, type = 'circles')), top = prettify.labels(type, 'string.base'))
       }, error = function(err) { flog.error('Probel with %s', err)})
   }
 }
 ```
 
+## Best C-index test in all runs
 
+```{r best.c.index.build, echo=FALSE}
+best.ones <- big.df %>%
+  as.tibble() %>%
+  filter(metric == 'C-Index (Test set)') %>%
+  mutate(base.model = prettify.labels(model, 'string.base'),
+         model.name = prettify.labels(model, 'model')) %>%
+  group_by(model.name) %>%
+  arrange(desc(values)) %>%
+  dplyr::slice(1)
 
+ydata.month <- ydata %>% mutate(time = time / 365 * 12)
+```
 
+### Best Elastic Net model *(C-index test)*
 
+```{r best.en.c.index, echo=FALSE, fig.height=10}
+filter.model <- 'Elastic Net'
+best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
+```
 
+### Best Hub model *(C-index test)*
 
+```{r best.hub.c.index, echo=FALSE, fig.height=10}
+filter.model <- 'Hub'
+best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
+```
 
+### Best Orphan model *(C-index test)*
+
+```{r best.orphan.c.index, echo=FALSE, fig.height=10}
+filter.model <- 'Orphan'
+best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
+```
+
+## Best Log-rank test in all runs
+
+```{r best.log.rank.build, echo=FALSE}
+best.ones <- big.df %>%
+  as.tibble() %>%
+  filter(metric == 'Log-rank (Test set)') %>%
+  mutate(base.model = prettify.labels(model, 'string.base'),
+         model.name = prettify.labels(model, 'model')) %>%
+  group_by(model.name) %>%
+  arrange(values) %>%
+  dplyr::slice(1)
+
+ydata.month <- ydata %>% mutate(time = time / 365 * 12)
+```
+
+### Best Elastic net *(Log-rank test)*
+
+```{r best.en.log.rank, echo=FALSE, fig.height=10}
+filter.model <- 'Elastic Net'
+best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
+```
+
+### Best Hub model *(Log-rank test)*
+
+```{r best_hub.log.rank, echo=FALSE, fig.height=10}
+filter.model <- 'Hub'
+best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
+```
+
+### Best Orphan model *(Log-rank test)*
+
+```{r best_orphan.log.rank, echo=FALSE, fig.height=10}
+filter.model <- 'Orphan'
+best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)$plot
+```
+
+`r if(nrow(big.df) == 0) {"-->"}`
 
 # Parameters for the report
 
 ```{r parms, echo=FALSE}
 show.params(params)
+```
+
+```{r, include=FALSE, eval=FALSE}
+rmarkdown::render('Analysis.Rmd', 
+                  output_file = 'test-render.html', 
+                  output_format = BiocStyle::html_document())
 ```

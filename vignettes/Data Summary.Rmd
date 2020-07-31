@@ -1,0 +1,19 @@
+---
+title: "Data Summary"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+
+name      <- c('Breast',  'Kidney', 'Brain',    'Lung',    'Skin',       'Uterine', 'Ovary')
+obs       <- c(960,       463,      488,        451,       351,          517,       370)
+deaths    <- c(137,       151,      123,        162,       174,          86,        226)
+censored  <- c(823,       312,      365,        289,       177,          431,       144)
+variables <- c(19874,     19867,    19848,      19861,     19844,        19843,     19856)
+non.zero  <- c(17916,     NULL,     NULL,       NULL,      17898,        NULL,      NULL)
+sample    <- c('primary', 'primary', 'primary', 'primary', 'metastatic', 'primary', 'primary')
+
+knitr::kable(tibble(name, obs, deaths, censored, variables, sample))
+```
+

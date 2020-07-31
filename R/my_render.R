@@ -7,7 +7,7 @@ my.render <- function(input, output_file = NULL, ...) {
     }
     rmarkdown::render(input,
                       output_file   = output_file,
-                      output_format = BiocStyle::html_document(),
+                      output_format = rmarkdown::html_document(dev='svg'),
                       ...)
   }, error = function(error) {
     futile.logger::flog.error('Something wrong happened while rendering %s',

@@ -20,8 +20,8 @@ vignette: >
   %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
   %\VignetteEncoding{UTF-8}
 params:
-  project: 'skcm.data.2018.09.11' # skcm prad brca
-  tissue: 'metastatic' # primary.solid.tumor metastatic solid.tissue.normal
+  project: 'lgg.data.2018.10.17' # skcm prad brca
+  tissue: 'primary.solid.tumor' # primary.solid.tumor metastatic solid.tissue.normal
   coding.genes: !r TRUE
   subtract.surv.column: !r NULL
   degree.unweighted: !r TRUE
@@ -56,6 +56,7 @@ library(glmnet)
 library(loose.rock)
 library(digest)
 library(ggplot2)
+library(survminer)
 library(reshape2)
 library(survival)
 library(brca.data)
@@ -78,7 +79,7 @@ devtools::load_all()
 .Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
 .Last.value <- show.message(FALSE)
 .Last.value <- flog.layout(layout.format('[~l ~t] ~m'))
-.Last.value <- flog.appender(appender.tee(sprintf('logger-optimal-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S'))))
+.Last.value <- flog.appender(appender.tee(file.path('logs', sprintf('logger-optimal-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S')))))
 theme_set(theme_minimal())
 ```
 
@@ -127,6 +128,28 @@ ydata.digest.cache     <- my.data$ydata.digest
 #
 rm(my.data)
 ```
+
+## Survival plot
+
+```{r surv.plot, fig.height=10, echo=FALSE}
+ggsurv <- survfit(Surv(time, status) ~ 1, data = ydata %>% mutate(time = time/365*12)) %>% 
+  ggsurvplot(data = ydata,
+             conf.int = FALSE,
+             risk.table = TRUE,
+             cumcensor = TRUE,
+             xlab = "Time in months",
+             tables.height = .1,
+             surv.median.line = "hv",  # add the median survival pointer.
+             break.x.by = 12,
+             #ncensor.plot = TRUE,
+             ggtheme = theme_minimal())
+#
+ggsurv$plot <- ggsurv$plot + theme(legend.position = 'none') #+ scale_x_continuous('x', breaks = seq(0, max((ydata %>% mutate(time = time/365*12))$time) + 20, 20))
+ggsurv$ncensor.plot <- ggpar(ggsurv$ncensor.plot, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv$table <- ggpar(ggsurv$table, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv
+```
+
 
 ## Load degree data
 
