@@ -1,0 +1,46 @@
+---
+title: "Untitled"
+output:
+  BiocStyle::html_document:
+    number_sections: yes
+    toc: true
+    dev: "svg"
+  github_document:
+    fig_width: 10
+    dev: "png"
+vignette: >
+  %\VignetteIndexEntry{Example for Classification Data -- Breast Invasive Carcinoma}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+---
+
+```{r, eval=FALSE}
+rmarkdown::render('delete_me.Rmd', output_format = BiocStyle::html_document())
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(dev = switch(BiocStyle::output(), html = "svg", latex = "pdf"))
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+library(ggplot2)
+qplot(mpg, wt, data = mtcars, geom = "path")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+

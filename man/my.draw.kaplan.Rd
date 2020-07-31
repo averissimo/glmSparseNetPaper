@@ -4,7 +4,7 @@
 \alias{my.draw.kaplan}
 \title{Title}
 \usage{
-my.draw.kaplan(coef.l, plot.title, xdata, ydata)
+my.draw.kaplan(coef.l, xdata, ydata, plot.title = "", no.plot = FALSE)
 }
 \arguments{
 \item{xdata.ix}{}

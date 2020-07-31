@@ -1,0 +1,29 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+system('find /home/averissimo/ssd_home/work/rpackages/network.cox-cache -type f -ctime -1 | xargs du -h | awk \'{print $2}\' > newRData.txt')
+
+aa <- as.vector(read.table('newRData.txt')[,1])
+
+.Last.value <- lapply(aa, function(path) {
+  if (file.info(path)$size == 0) {
+    file.remove(path)
+    return(NULL)
+  }
+  new_env <- new.env()
+  load(path, envir = new_env)
+  result <- new_env$result
+  save(result, file = path, compress = 'gzip')
+  result <- NULL
+  new_env <- NULL
+  return(NULL)
+})
+```
+

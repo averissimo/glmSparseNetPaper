@@ -37,15 +37,18 @@ glmSparseNet.cox <- function(xdata,
                               ...)
 
   if (sum(result$coef != 0) < (target.vars - 5)) {
+    lambda.first <- result$model$lambda[1]
+
+    lambda <- buildLambda(lambda.first)
+
     result <- glmSparseNet.cox_(xdata            = xdata,
                                 ydata            = ydata,
                                 target.vars      = target.vars,
                                 network          = network,
                                 alpha            = alpha,
-                                nlambda          = 1000,
+                                lambda           = lambda,
                                 xdata.digest     = xdata.digest,
                                 force.recalc     = force.recalc,
-                                lambda.min.ratio = .00001,
                                 ...)
   }
   return(result)
@@ -97,6 +100,6 @@ glmSparseNet.cox_ <- function(xdata,
   }
   new.target.lambda <- new.model$lambda[var.ix[sort(var.ix, decreasing = T, index.return = T)$ix[1]]]
   new.coef          <- as.vector(coef(new.model, s = new.target.lambda))
-  names(new.coef)   <- colnames(xdata)
+  # names(new.coef)   <- colnames(xdata) # reduce size of object
   return(list(model = new.model, lambda = new.target.lambda, coef = new.coef))
 }

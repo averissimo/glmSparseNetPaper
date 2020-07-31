@@ -5,7 +5,7 @@
 \title{Call glmSparseNet model with Cox regression}
 \usage{
 glmSparseNet.cox_(xdata, ydata, target.vars, network = "correlation",
-  xdata.digest = NULL, cache.prefix = "glmSparseNet.cache",
+  xdata.digest = NULL, cache.prefix = "glmSparseNet.glmnet.model",
   force.recalc = FALSE, ...)
 }
 \arguments{

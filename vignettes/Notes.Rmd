@@ -1,0 +1,232 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+Robustez do método
+ - Runs dá coisas diferentes
+ - Uma forma para escolher um bom modelo para treinar (simulando várias partições)
+ - Em particular nós usamos esta framework para escolher um modelo particular para mostrar resultados
+ - Isto não é visto em resultados de papers-- pq há muitos runs q não dão significativos
+
+Rank dos 3 métodos
+
+O que usar como tempo de follow-up (inconsistência entre melanoma e breast)
+
+Dar nomes aos resultados
+ - estabilidade
+ - consistência de genes seleccionados
+
+Identificar as dificuldades em avaliar os resultados
+
+```{r setup}
+devtools::load_all()
+```
+
+```{r}
+n.cores <- 14
+
+my.render('Analysis.Rmd', output_file = 'brca-center-1000-random.html', 
+          params = list(normalization = 'center', 
+                        project       = 'brca.data.2018.09.13',
+                        tissue        = 'primary.solid.tumor',
+                        subtract.surv.column = NULL,
+                        balanced.sets = FALSE,
+                        ntimes        = 1000,
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .2, vars = 39), 
+                                             hub    = list(alpha = .2, vars = 56), 
+                                             orphan = list(alpha = .2, vars = 42))
+                        ))
+
+my.render('Analysis.Rmd', output_file = 'skcm-center-1000-random.html', 
+          params = list(normalization = 'center', 
+                        project       = 'skcm.data.2018.09.11', 
+                        tissue        = 'metastatic',
+                        balanced.sets = FALSE,
+                        n.cores       = n.cores,
+                        subtract.surv.column = 'days_to_submitted_specimen_dx',
+                        ntimes        = 1000, 
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 116), 
+                                             hub    = list(alpha = .1, vars = 41),
+                                             orphan = list(alpha = .1, vars = 111))
+                        ))
+```
+
+
+
+```{r}
+n.cores <- 14
+ntimes <- 5000
+
+#
+# Completely random training/test sets instead of balanced
+# 
+
+my.render('Analysis.Rmd', output_file = sprintf('brca-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'brca.data.2018.09.13',
+                        tissue        = 'primary.solid.tumor',
+                        subtract.surv.column = NULL,
+                        balanced.sets = TRUE,
+                        ntimes        = ntimes,
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .2, vars = 39), 
+                                             hub    = list(alpha = .2, vars = 56), 
+                                             orphan = list(alpha = .2, vars = 42))
+                        ))
+
+my.render('Analysis.Rmd', output_file = sprintf('skcm-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'skcm.data.2018.09.11', 
+                        tissue        = 'metastatic',
+                        balanced.sets = TRUE,
+                        subtract.surv.column = 'days_to_submitted_specimen_dx',
+                        ntimes        = ntimes, 
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 116), 
+                                             hub    = list(alpha = .1, vars = 41),
+                                             orphan = list(alpha = .1, vars = 111))
+                        ))
+
+my.render('Analysis.Rmd', output_file = sprintf('kirc-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'kirc.data.2018.10.17', 
+                        tissue        = 'primary.solid.tumor',
+                        balanced.sets = TRUE,
+                        subtract.surv.column = NULL,
+                        ntimes        = ntimes, 
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .2, vars = 69), 
+                                             hub    = list(alpha = .1, vars = 41),
+                                             orphan = list(alpha = .1, vars = 38))
+                        ))
+
+my.render('Analysis.Rmd', output_file = sprintf('lgg-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'lgg.data.2018.10.17', 
+                        tissue        = 'primary.solid.tumor',
+                        balanced.sets = TRUE,
+                        subtract.surv.column = NULL,
+                        ntimes        = ntimes, 
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 175), 
+                                             hub    = list(alpha = .2, vars = 51),
+                                             orphan = list(alpha = .2, vars = 101))
+                        ))
+
+my.render('Analysis.Rmd', output_file = sprintf('luad-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'luad.data.2018.10.17', 
+                        tissue        = 'primary.solid.tumor',
+                        balanced.sets = TRUE,
+                        subtract.surv.column = NULL,
+                        ntimes        = ntimes, 
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 110), 
+                                             hub    = list(alpha = .1, vars = 56),
+                                             orphan = list(alpha = .1, vars = 97))
+                        ))
+
+my.render('Analysis.Rmd', output_file = sprintf('prad-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'prad.data.2018.10.11', 
+                        tissue        = 'primary.solid.tumor',
+                        balanced.sets = TRUE,
+                        subtract.surv.column = NULL,
+                        ntimes        = ntimes, 
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .6, vars = 3), 
+                                             hub    = list(alpha = .1, vars = 13),
+                                             orphan = list(alpha = .1, vars = 5))
+                        ))
+
+my.render('Analysis.Rmd', output_file = sprintf('ucec-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'ucec.data.2018.10.17', 
+                        tissue        = 'primary.solid.tumor',
+                        balanced.sets = TRUE,
+                        subtract.surv.column = NULL,
+                        ntimes        = ntimes, 
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .1, vars = 170), 
+                                             hub    = list(alpha = .1, vars = 38),
+                                             orphan = list(alpha = .1, vars = 125))
+                        ))
+
+
+my.render('Analysis.Rmd', output_file = sprintf('ov-center-%d.html', ntimes), 
+          params = list(normalization = 'center', 
+                        project       = 'ov.data.2018.11.30',
+                        tissue        = 'primary.solid.tumor',
+                        subtract.surv.column = NULL,
+                        balanced.sets = TRUE,
+                        ntimes        = ntimes,
+                        n.cores       = n.cores,
+                        target.vars   = list(glmnet = list(alpha = .2, vars = 30), 
+                                             hub    = list(alpha = .2, vars = 55), 
+                                             orphan = list(alpha = .2, vars = 110))
+                        ))
+```
+
+```{r}
+n.cores <- 10
+seed.additional <- 1
+
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('skcm-optimal-%d.html', seed.additional + 1),
+          params = list(seed.additional = seed.additional,
+                        project         = 'skcm.data.2018.09.11',
+                        subtract.surv.column = 'days_to_submitted_specimen_dx',
+                        n.cores         = n.cores,
+                        tissue          = 'metastatic'))
+
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('brca-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'brca.data.2018.09.13',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('prad-optimal-%d.html', seed.additional + 1),
+          params = list(seed.additional = seed.additional,
+                        project         = 'prad.data.2018.10.11',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('ucec-optimal-%d.html', seed.additional + 1),
+          params = list(seed.additional = seed.additional,
+                        project         = 'ucec.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('kirc-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'kirc.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('luad-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'luad.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+my.render('OptimalVariableSize.Rmd', 
+          output_file = sprintf('lgg-optimal-%d.html', seed.additional + 1), 
+          params = list(seed.additional = seed.additional,
+                        project         = 'lgg.data.2018.10.17',
+                        n.cores         = n.cores,
+                        tissue          = 'primary.solid.tumor'))
+
+```
+
+
+
+

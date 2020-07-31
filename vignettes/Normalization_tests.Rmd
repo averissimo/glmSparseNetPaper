@@ -286,13 +286,13 @@ if(length(best.model.nosd) * length(best.model.sd) * 1 > 0) {
 ```{r, message=FALSE, warning=FALSE, echo=FALSE}
 plot.list <- list()
 if(length(best.model.nosd) > 0) {
-  plot.list <- c(plot.list, list(draw.kaplan(best.model.nosd, xdata.train[, names(best.model.nosd)], ydata.train, plot.title = 'standardize = FALSE')$plot))
+  plot.list <- c(plot.list, list(separate2GroupsCox(best.model.nosd, xdata.train[, names(best.model.nosd)], ydata.train, plot.title = 'standardize = FALSE')$plot))
 } else {
   flog.warn('Model without standardize does not select any variables')
 }
   
 if(length(best.model.sd) > 0) {
-  plot.list <- c(plot.list, list(draw.kaplan(best.model.sd, xdata.train[, names(best.model.sd)], ydata.train, plot.title = 'standardize = TRUE')$plot))
+  plot.list <- c(plot.list, list(separate2GroupsCox(best.model.sd, xdata.train[, names(best.model.sd)], ydata.train, plot.title = 'standardize = TRUE')$plot))
 } else {
   flog.warn('Model with standardize does not select any variables')
 }
@@ -305,13 +305,13 @@ if (length(plot.list) > 0) multiplot(plotlist = plot.list, ncol = 2)
 ```{r, message=FALSE, warning=FALSE, echo=FALSE}
 plot.list <- list()
 if(length(best.model.nosd) > 0) {
-  plot.list <- c(plot.list, list(draw.kaplan(best.model.nosd, xdata.test[, names(best.model.nosd)], ydata.test, plot.title = 'standardize = FALSE')$plot))
+  plot.list <- c(plot.list, list(separate2GroupsCox(best.model.nosd, xdata.test[, names(best.model.nosd)], ydata.test, plot.title = 'standardize = FALSE')$plot))
 } else {
   flog.warn('Model without standardize does not select any variables')
 }
   
 if(length(best.model.sd) > 0) {
-  plot.list <- c(plot.list, list(draw.kaplan(best.model.sd, xdata.test[, names(best.model.sd)], ydata.test, plot.title = 'standardize = TRUE')$plot))
+  plot.list <- c(plot.list, list(separate2GroupsCox(best.model.sd, xdata.test[, names(best.model.sd)], ydata.test, plot.title = 'standardize = TRUE')$plot))
 } else {
   flog.warn('Model with standardize does not select any variables')
 }

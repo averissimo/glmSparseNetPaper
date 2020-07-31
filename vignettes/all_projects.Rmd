@@ -1,0 +1,148 @@
+---
+title: "Untitled"
+output: html_document
+params:
+  coding.genes: !r TRUE
+  log2: !r TRUE
+  normalization: 'center'         # possible values: center, max, none
+  handle.duplicates: 'keep_first' # possible values: keep_all , keep_first
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+library(futile.logger)
+library(parallel)
+library(glmnet)
+library(survminer)
+library(loose.rock)
+library(digest)
+library(ggplot2)
+library(reshape2)
+library(survival)
+library(Vennerable)
+library(limma)
+library(tidyverse)
+library(forcats)
+# library(survival.owl)
+library(biclust)
+#
+library(glmSparseNet)
+
+# In case classic glmnet is used
+library(doMC)
+registerDoMC(cores=params$n.cores)
+globalenv() %>% {.$global.n.cores <- params$n.cores }
+
+#
+devtools::load_all()
+#
+.Last.value <- base.dir(path = '/ssd_home/averissimo/work/rpackages/network.cox-cache')
+.Last.value <- show.message(FALSE)
+.Last.value <- flog.layout(layout.format('[~l] ~m'))
+.Last.value <- flog.appender(appender.tee(file.path('logs', sprintf('logger-analysis-%s.txt', format(Sys.time(), '%Y%m%d-%Hh%Mm%S')))))
+theme_set(theme_minimal())
+```
+
+```{r}
+project.list <- list()
+
+project.list[['brca']] <- list(project = 'brca.data.2018.09.13', tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['ov']]   <- list(project = 'ov.data.2018.11.30',   tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['kirc']] <- list(project = 'kirc.data.2018.10.17', tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['lgg']]  <- list(project = 'lgg.data.2018.10.17',  tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['luad']] <- list(project = 'luad.data.2018.10.17', tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['prad']] <- list(project = 'prad.data.2018.10.11', tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['ucec']] <- list(project = 'ucec.data.2018.10.17', tissue = 'primary.solid.tumor', subtract.surv.column = NULL)
+project.list[['skcm']] <- list(project = 'skcm.data.2018.09.11', tissue = 'metastatic', subtract.surv.column = 'days_to_submitted_specimen_dx')
+```
+
+
+```{r load_tcga, echo=FALSE}
+for(ix.name in names(project.list)) {
+  my.data <- run.cache(prepare.tcga.survival.data, 
+                       project.list[[ix.name]]$project, 
+                       project.list[[ix.name]]$tissue, 
+                       #
+                       #input.type                = 'rna',
+                       normalization             = params$normalization,
+                       log2.pre.normalize        = params$log2,
+                       #
+                       handle.duplicates         = 'keep_first', 
+                       coding.genes              = TRUE,
+                       subtract.surv.column      = project.list[[ix.name]]$subtract.surv.column,
+                       cache.prefix              = 'tcga-data.new',
+                       show.message = TRUE)
+  #
+  project.list[[ix.name]]$clinical <- my.data$clinical
+  #
+  project.list[[ix.name]]$xdata     <- my.data$xdata
+  project.list[[ix.name]]$ydata     <- my.data$ydata
+  project.list[[ix.name]]$xdata.raw <- my.data$xdata.raw
+  #
+  #
+  project.list[[ix.name]]$xdata.digest.cache     <- my.data$xdata.digest
+  project.list[[ix.name]]$xdata.raw.digest.cache <- my.data$xdata.raw.digest
+  project.list[[ix.name]]$ydata.digest.cache     <- my.data$ydata.digest
+  #
+  rm(my.data)
+}
+```
+
+```{r, echo=FALSE, message=FALSE}
+for (ix in names(project.list)) {
+  
+  
+  if (!require(project.list[[ix]]$project, character.only = TRUE)) {
+    stop(sprintf('There is no package called \'%s\' installed, please go to https://github.com/averissimo/tcga.data/releases and install the corresponding release.'))
+  }
+  data("multiAssay", package = project.list[[ix]]$project)
+  my.dim.raw <- multiAssay@ExperimentList[['RNASeqFPKM']]@assayData$exprs %>% dim
+  
+  my.dim <- project.list[[ix]]$xdata %>% dim
+  
+  flog.info('\t %s \t %d \t individuals \t %d \t protein coding genes \t %d \t individuals \t %d \t genes', ix, my.dim[1], my.dim[2], my.dim.raw[2], my.dim.raw[1])
+}
+```
+
+
+```{r}
+master.surv <- data.frame()
+for(ix.name in names(project.list)) {
+   master.surv <- project.list[[ix.name]]$ydata %>% 
+    mutate(bcr_patient_barcode = rownames(project.list[[ix.name]]$ydata), project = ix.name) %>%
+    { rbind(master.surv, .) }
+}
+```
+
+
+
+```{r}
+ggsurv <- survfit(Surv(time, status) ~ project, data = master.surv %>% mutate(time = time/365)) %>% 
+  ggsurvplot(data = master.surv,
+             conf.int = FALSE,
+             #risk.table = TRUE,
+             #cumcensor = TRUE,
+             xlab = "Time in years",
+             tables.height = .1,
+             surv.median.line = "h",  # add the median survival pointer.
+             break.x.by = 1,
+             censor.shape = '+',
+             legend.title = '',
+             legend.labs = names(project.list),
+             #ncensor.plot = TRUE,
+             ggtheme = theme_minimal())
+
+```
+
+```{r}
+ggsurv$plot <- ggsurv$plot + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0))
+#
+#ggsurv$plot <- ggsurv$plot + theme(legend.position = 'none') #+ scale_x_continuous('x', breaks = seq(0, max((ydata %>% mutate(time = time/365*12))$time) + 20, 20))
+#ggsurv$ncensor.plot <- ggpar(ggsurv$ncensor.plot, font.y = c(0, "bold.italic", "darkgreen"))
+#ggsurv$table <- ggpar(ggsurv$table, font.y = c(0, "bold.italic", "darkgreen"))
+ggsurv$plot
+```
+
