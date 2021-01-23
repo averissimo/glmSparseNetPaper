@@ -1354,7 +1354,7 @@ overlapping.genes.names <- loose.rock::run.cache(geneNames, overlapping.genes.na
   dplyr::arrange(desc(total), desc(Overlap))
 
 overlapping.genes.names  %>% 
-  dplyr::top_n(20, total)
+  dplyr::top_n(20, total) %>% 
   knitr::kable()
 ```
 
@@ -1386,23 +1386,23 @@ best.ones <- big.df %>%
 ydata.month <- ydata %>% mutate(time = time / 365 * 12)
 ```
 
-### Best Elastic Net model *(C-index test)* {-}
+### Best Elastic Net model _(C-Index test)_ {- .tabset .tabset-fade .tabset-pills}
 
-```{r best.en.c.index, echo=FALSE, fig.asp=1}
+```{r best.en.c.index, echo=FALSE, fig.asp=1, results='asis'}
 filter.model <- 'Elastic Net'
 best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
 ```
 
-### Best Hub model *(C-index test)* {-}
+### Best Hub model _(C-Index test)_ {- .tabset .tabset-fade .tabset-pills}
 
-```{r best.hub.c.index, echo=FALSE, fig.asp=1}
+```{r best.hub.c.index, echo=FALSE, fig.asp=1, results='asis'}
 filter.model <- 'Hub'
 best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
 ```
 
-### Best Orphan model *(C-index test)* {-}
+### Best Orphan model _(C-Index test)_ {- .tabset .tabset-fade .tabset-pills}
 
-```{r best.orphan.c.index, echo=FALSE, fig.asp=1}
+```{r best.orphan.c.index, echo=FALSE, fig.asp=1, results='asis'}
 filter.model <- 'Orphan'
 best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
 ```
@@ -1422,23 +1422,23 @@ best.ones <- big.df %>%
 ydata.month <- ydata %>% mutate(time = time / 365 * 12)
 ```
 
-### Best Elastic net *(Log-rank test)* {-}
+### Best Elastic net _(Log-rank test)_ {- .tabset .tabset-fade .tabset-pills}
 
-```{r best.en.log.rank, echo=FALSE, fig.asp=1}
+```{r best.en.log.rank, echo=FALSE, fig.asp=1, results='asis'}
 filter.model <- 'Elastic Net'
 best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
 ```
 
-### Best Hub model *(Log-rank test)* {-}
+### Best Hub model _(Log-rank test)_ {- .tabset .tabset-fade .tabset-pills}
 
-```{r best_hub.log.rank, echo=FALSE, fig.asp=1}
+```{r best_hub.log.rank, echo=FALSE, fig.asp=1, results='asis'}
 filter.model <- 'Hub'
 best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)
 ```
 
-### Best Orphan model *(Log-rank test)* {-}
+### Best Orphan model _(Log-rank test)_ {- .tabset .tabset-fade .tabset-pills}
 
-```{r best_orphan.log.rank, echo=FALSE, fig.asp=1}
+```{r best_orphan.log.rank, echo=FALSE, fig.asp=1, results='asis'}
 filter.model <- 'Orphan'
 best.model.print(filter.model, best.ones, xdata, ydata.month, ntimes.results)$plot
 ```
