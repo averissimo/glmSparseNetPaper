@@ -14,6 +14,7 @@
 #' prettify.labels('orphan--glmnet--0.01--83', 'string')
 #' prettify.labels('orphan--glmnet--0.01--83', 'string.short')
 #' prettify.labels('orphan--glmnet--0.01--83', 'string.base')
+#' prettify.labels('orphan--glmnet--0.01--83', 'target.vars')
 prettify.labels <- function(label, ret.value = 'string.short') {
 
   label.old <- label
